@@ -1,0 +1,23 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-mist text-ink antialiased;
+  background-image:
+    radial-gradient(circle at top left, rgba(15, 118, 110, 0.14), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(245, 158, 11, 0.14), transparent 22%),
+    linear-gradient(180deg, #f8fbfd 0%, #eef3f8 100%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.panel {
+  @apply rounded-3xl border border-slate-200/80 bg-white/90 shadow-panel backdrop-blur;
+}
