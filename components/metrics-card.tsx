@@ -19,6 +19,7 @@ export function MetricsCard({ speech, face }: MetricsCardProps) {
         <div className="rounded-2xl bg-slate-50 p-4">
           <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Speaking pace</p>
           <p className="mt-2 text-2xl font-semibold text-ink">{speech.speakingPace} wpm</p>
+          <p className="mt-2 text-xs text-slate-500">Stable delivery tends to land best between 105 and 155 wpm.</p>
         </div>
         <div className="rounded-2xl bg-slate-50 p-4">
           <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Filler words</p>

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { evaluateAnswer, generateQuestion, shouldCompleteInterview } from "@/lib/interview-engine";
+import { applyTurnToSession, evaluateAnswer, generateQuestion } from "@/lib/interview-engine";
 import { InterviewSession, InterviewTurn } from "@/lib/interview-types";
 
 export async function POST(request: Request) {
@@ -17,7 +17,8 @@ export async function POST(request: Request) {
     speechMetrics: body.speechMetrics,
     faceMetrics: body.faceMetrics,
     resume: body.session.resume,
-    previousTurns: body.session.turns
+    previousTurns: body.session.turns,
+    memory: body.session.memory
   });
 
   const turn: InterviewTurn = {
@@ -30,22 +31,13 @@ export async function POST(request: Request) {
     evaluation
   };
 
-  const turns = [...body.session.turns, turn];
-  const interviewComplete = shouldCompleteInterview(turns);
-  const nextQuestion = interviewComplete
-    ? null
-    : await generateQuestion({
-        role: body.session.role,
-        turns,
-        resume: body.session.resume
-      });
+  const nextSession = applyTurnToSession(body.session, turn);
+  const nextQuestion = nextSession.interviewComplete ? null : await generateQuestion({ session: nextSession });
 
   return NextResponse.json({
     session: {
-      ...body.session,
-      turns,
+      ...nextSession,
       currentQuestion: nextQuestion,
-      interviewComplete
     },
     evaluation
   });

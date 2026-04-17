@@ -24,6 +24,14 @@ export function FeedbackPanel({ evaluation }: { evaluation: AnswerEvaluation | n
       </div>
 
       <div className="mt-6 space-y-4 text-sm text-slate-700">
+        <section className="rounded-2xl bg-slate-50 px-4 py-3">
+          <h3 className="font-semibold text-ink">Interviewer reaction</h3>
+          <p className="mt-1">{evaluation.interviewerReaction}</p>
+          <p className="mt-2 text-xs uppercase tracking-[0.18em] text-slate-500">
+            {evaluation.perceivedTone} • {evaluation.pressureLabel}
+          </p>
+        </section>
+
         <section>
           <h3 className="font-semibold text-ink">Feedback</h3>
           <p className="mt-1">{evaluation.feedback}</p>
@@ -32,6 +40,18 @@ export function FeedbackPanel({ evaluation }: { evaluation: AnswerEvaluation | n
         <section>
           <h3 className="font-semibold text-ink">Missed opportunity</h3>
           <p className="mt-1">{evaluation.missedOpportunity}</p>
+          <div className="mt-3 space-y-2">
+            {evaluation.missedOpportunityDetails.map((detail) => (
+              <div key={detail.exactThing} className="rounded-2xl bg-rose-50 px-4 py-3 text-rose-950">
+                <p className="font-medium">{detail.exactThing}</p>
+                <p className="mt-1 text-xs text-rose-800">Source: {detail.source}</p>
+                <p className="mt-1 text-xs text-rose-800">{detail.whyItMattered}</p>
+                <p className="mt-2 text-xs font-semibold uppercase tracking-[0.16em] text-rose-700">
+                  Impact score increase if included: +{detail.impactScoreIncrease}%
+                </p>
+              </div>
+            ))}
+          </div>
         </section>
 
         <section>

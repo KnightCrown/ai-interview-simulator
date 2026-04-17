@@ -6,6 +6,9 @@ export type JobRole =
   | "Marketing Manager";
 
 export type ResumeMode = "Use Sample Resume" | "Skip Resume";
+export type HiringStage = "Applied" | "Phone Screen" | "Technical Round" | "Final Round" | "Decision";
+export type FunnelOutcome = "Selected" | "Borderline" | "Rejected";
+export type HiringLikelihood = "Pass" | "Borderline" | "Fail";
 
 export interface ResumeProfile {
   name: string;
@@ -26,16 +29,29 @@ export interface SpeechMetrics {
   speakingPace: number;
 }
 
+export interface MissedOpportunityDetail {
+  exactThing: string;
+  source: string;
+  whyItMattered: string;
+  impactScoreIncrease: number;
+}
+
 export interface AnswerEvaluation {
   clarity: number;
   relevance: number;
   structure: number;
   confidence: number;
   engagement: number;
+  liveConfidence: number;
   feedback: string;
   missedOpportunity: string;
   missingResumeHighlights: string[];
+  missedOpportunityDetails: MissedOpportunityDetail[];
   improvedAnswer: string;
+  rewriteHighlights: string[];
+  interviewerReaction: string;
+  perceivedTone: string;
+  pressureLabel: string;
 }
 
 export interface InterviewTurn {
@@ -48,6 +64,15 @@ export interface InterviewTurn {
   evaluation: AnswerEvaluation;
 }
 
+export interface InterviewMemory {
+  strengthSignals: string[];
+  weakAreas: string[];
+  missingResumePoints: string[];
+  toneSummary: string;
+  strictness: number;
+  interviewerMood: string;
+}
+
 export interface InterviewSession {
   id: string;
   role: JobRole;
@@ -57,6 +82,11 @@ export interface InterviewSession {
   turns: InterviewTurn[];
   currentQuestion: string | null;
   interviewComplete: boolean;
+  demoMode: boolean;
+  currentStage: HiringStage;
+  hiringOutcome: FunnelOutcome | null;
+  liveConfidence: number;
+  memory: InterviewMemory;
 }
 
 export interface FinalReport {
@@ -67,5 +97,11 @@ export interface FinalReport {
   engagement: number;
   missedOpportunitySummary: string;
   bestImprovedAnswer: string;
-  hiringLikelihood: "Pass" | "Borderline" | "Fail";
+  hiringLikelihood: HiringLikelihood;
+  hiringOutcome: FunnelOutcome;
+  emotionalSummary: string;
+  strengths: string[];
+  weaknesses: string[];
+  interviewerNotes: string[];
+  suggestedNextImprovements: string[];
 }

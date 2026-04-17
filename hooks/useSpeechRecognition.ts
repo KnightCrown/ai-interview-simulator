@@ -4,6 +4,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { SpeechMetrics } from "@/lib/interview-types";
 
 type RecognitionInstance = SpeechRecognition;
+type RecognitionEventLike = {
+  resultIndex: number;
+  results: ArrayLike<{
+    isFinal: boolean;
+    0: {
+      transcript: string;
+    };
+  }>;
+};
 
 declare global {
   interface Window {
@@ -15,31 +24,11 @@ declare global {
     continuous: boolean;
     interimResults: boolean;
     lang: string;
-    onresult: ((event: SpeechRecognitionEvent) => void) | null;
+    onresult: ((event: RecognitionEventLike) => void) | null;
     onend: (() => void) | null;
     onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
     start: () => void;
     stop: () => void;
-  }
-
-  interface SpeechRecognitionEvent {
-    resultIndex: number;
-    results: SpeechRecognitionResultList;
-  }
-
-  interface SpeechRecognitionAlternative {
-    transcript: string;
-  }
-
-  interface SpeechRecognitionResult {
-    isFinal: boolean;
-    [index: number]: SpeechRecognitionAlternative;
-    length: number;
-  }
-
-  interface SpeechRecognitionResultList {
-    [index: number]: SpeechRecognitionResult;
-    length: number;
   }
 
   interface SpeechRecognitionErrorEvent {
