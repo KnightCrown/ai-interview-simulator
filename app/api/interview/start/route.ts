@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { buildSession, generateInitialQuestions } from "@/lib/interview-engine";
+import { buildSession, generateQuestion } from "@/lib/interview-engine";
 import { SAMPLE_RESUME } from "@/lib/sample-data";
 import { InterviewDifficulty, JobRole, ResumeMode } from "@/lib/interview-types";
 
@@ -16,10 +16,9 @@ export async function POST(request: Request) {
 
   const resume = body.resumeMode === "Use Sample Resume" ? SAMPLE_RESUME : null;
   const session = buildSession(role, difficulty, body.resumeMode, resume);
-  const [firstQuestion, secondQuestion] = await generateInitialQuestions(session);
+  const firstQuestion = await generateQuestion({ session, targetTurnIndex: 0 });
 
   session.currentQuestion = firstQuestion;
-  session.questionQueue = [secondQuestion];
 
   return NextResponse.json({ session });
 }

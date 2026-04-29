@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { buildSafeResumePreview } from "@/lib/interview-scoring";
-import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
+import { loadMediaDevicePreferences, markMediaPermissionGranted, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
 import { JOB_ROLES, SAMPLE_RESUME } from "@/lib/sample-data";
 import { InterviewDifficulty, InterviewSession, ResumeMode } from "@/lib/interview-types";
 import { useInterviewSession } from "@/lib/session-store";
@@ -35,6 +35,19 @@ export default function LandingPage() {
     stream.getTracks().forEach((track) => track.stop());
   };
 
+  const isPermissionGranted = async (name: "camera" | "microphone") => {
+    if (!("permissions" in navigator) || !navigator.permissions?.query) {
+      return null;
+    }
+
+    try {
+      const status = await navigator.permissions.query({ name: name as PermissionName });
+      return status.state === "granted";
+    } catch {
+      return null;
+    }
+  };
+
   const refreshMediaDevices = async () => {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const microphones = devices.filter((device) => device.kind === "audioinput");
@@ -53,6 +66,30 @@ export default function LandingPage() {
     return { microphones, cameras };
   };
 
+  const canReuseSavedDeviceSelection = async () => {
+    const savedPreferences = loadMediaDevicePreferences();
+    if (!savedPreferences?.audioInputId || !savedPreferences?.videoInputId || !savedPreferences.mediaPermissionGranted) {
+      return null;
+    }
+
+    const cameraGranted = await isPermissionGranted("camera");
+    const microphoneGranted = await isPermissionGranted("microphone");
+    const permissionsBlocked = cameraGranted === false || microphoneGranted === false;
+    if (permissionsBlocked) {
+      return null;
+    }
+
+    const { microphones, cameras } = await refreshMediaDevices();
+    const savedMicrophoneAvailable = microphones.some((device) => device.deviceId === savedPreferences.audioInputId);
+    const savedCameraAvailable = cameras.some((device) => device.deviceId === savedPreferences.videoInputId);
+
+    if (!savedMicrophoneAvailable || !savedCameraAvailable) {
+      return null;
+    }
+
+    return savedPreferences;
+  };
+
   const openDeviceDialog = async () => {
     const normalizedRole = getNormalizedRole();
     if (!normalizedRole) {
@@ -69,6 +106,14 @@ export default function LandingPage() {
     setStartError(null);
 
     try {
+      const reusablePreferences = await canReuseSavedDeviceSelection();
+      if (reusablePreferences) {
+        setSelectedAudioDeviceId(reusablePreferences.audioInputId);
+        setSelectedVideoDeviceId(reusablePreferences.videoInputId);
+        await startInterview();
+        return;
+      }
+
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
         video: {
@@ -77,6 +122,7 @@ export default function LandingPage() {
         }
       });
       stopMediaStream(stream);
+      markMediaPermissionGranted();
 
       const { microphones, cameras } = await refreshMediaDevices();
       if (microphones.length === 0 || cameras.length === 0) {
@@ -146,7 +192,8 @@ export default function LandingPage() {
       stopMediaStream(stream);
       saveMediaDevicePreferences({
         audioInputId: selectedAudioDeviceId,
-        videoInputId: selectedVideoDeviceId
+        videoInputId: selectedVideoDeviceId,
+        mediaPermissionGranted: true
       });
       setShowDeviceDialog(false);
       await startInterview();

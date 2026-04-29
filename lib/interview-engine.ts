@@ -87,15 +87,30 @@ export function buildFallbackQuestion(
 
   const prompt = prompts[stage] ?? prompts[4];
 
-  if (stage > 0 && previousAnswer) {
-    if (memory.strictness >= 70 && previousWeakArea) {
-      return `${prompt} Earlier you left me wanting more around ${previousWeakArea}. Address that directly.`;
-    }
+  const isFollowUpQuestion = stage === 1 || stage === 3;
 
-    return `${prompt} Earlier you mentioned ${previousAnswer.split(" ").slice(0, 8).join(" ")}... Can you expand on that?`;
+  if (stage === 0 || !isFollowUpQuestion) {
+    return prompt;
   }
 
-  return prompt;
+  let tail = "";
+
+  if (stage > 0 && previousAnswer) {
+    if (memory.strictness >= 70 && previousWeakArea) {
+      tail = ` Earlier you left me wanting more around ${previousWeakArea}. Address that directly.`;
+    } else {
+      tail = ` Earlier you mentioned ${previousAnswer.split(" ").slice(0, 8).join(" ")}... Can you expand on that?`;
+    }
+  }
+
+  if (stage === 3 && turns.length >= 2) {
+    const priorInterviewerFeedback = turns[turns.length - 2]?.evaluation?.feedback?.trim();
+    if (priorInterviewerFeedback) {
+      tail = `${tail} In your prior feedback to the candidate (after the answer before their last one), you said: ${priorInterviewerFeedback}`;
+    }
+  }
+
+  return `${prompt}${tail}`;
 }
 
 export function buildFallbackEvaluation(input: {
@@ -382,6 +397,36 @@ export function normalizeFinalReport(parsed: Partial<FinalReport>, fallback: Fin
   };
 }
 
+function buildSequentialQuestionInstructions(session: InterviewSession, targetTurnIndex: number) {
+  const { role, turns } = session;
+  const isFollowUpQuestion = targetTurnIndex === 1 || targetTurnIndex === 3;
+
+  if (targetTurnIndex === 0) {
+    return `SEQUENTIAL QUESTION RULES — Question 1 only:
+- Ground the question in the job role, resume/CV context, difficulty, and role expectation signals below.
+- Do not reference any prior interview answers, transcripts, or feedback (there are none yet).
+- Do not pretend the candidate already spoke.`;
+  }
+
+  if (!isFollowUpQuestion) {
+    return `SEQUENTIAL QUESTION RULES — Question ${targetTurnIndex + 1}:
+- This question should be a fresh, standalone question (not a direct follow-up).
+- Keep it role-specific and resume-aware, but do NOT anchor it to the immediately previous answer as a direct follow-up.
+- You MUST still use prior interview context (earlier questions, answers, and feedback) to avoid repeating what has already been covered.
+- Introduce a new angle or competency that has not been adequately tested yet, similar to how a real interviewer broadens coverage across the interview.
+- If a competency has already been explored deeply, move to another relevant area instead of re-asking the same thing.
+- Do not greet/reintroduce yourself or use filler openers.`;
+  }
+
+  const lastAnswer = turns[turns.length - 1]?.transcript?.trim() ?? "";
+
+  return `SEQUENTIAL QUESTION RULES — Question ${targetTurnIndex + 1}:
+- This question must be a direct follow-up to what the candidate just said.
+- Probe deeper, clarify tradeoffs, challenge assumptions, or pressure-test evidence from the latest answer.
+- Candidate's most recent answer: ${JSON.stringify(lastAnswer)}
+- Keep the job role and resume/CV context in mind: role ${JSON.stringify(role)}`;
+}
+
 export async function generateQuestion(input: {
   session: InterviewSession;
   targetTurnIndex?: number;
@@ -394,16 +439,20 @@ export async function generateQuestion(input: {
   });
   const roleExpectations = getRoleExpectations(input.session.role);
   const preparedQuestions = [input.session.currentQuestion, ...(input.session.questionQueue ?? [])].filter(Boolean);
+  const sequentialInstructions = buildSequentialQuestionInstructions(input.session, targetTurnIndex);
   const openAiResponse = await generateWithOpenAI(`
 You are an interviewer running a realistic ${input.session.role} interview at ${input.session.difficulty} difficulty.
 Behave like a real person with memory, light personality, and evolving strictness.
 Generate exactly one concise interview question for question ${targetTurnIndex + 1} of ${TURN_LIMIT}.
-Reference previous answers when helpful.
-Avoid repeating any prepared or already-asked question.
+
+${sequentialInstructions}
+
+Avoid repeating any question text you already asked. Already-asked or queued wording to avoid: ${JSON.stringify(preparedQuestions)}
+
 Conversation continuity rules:
 - Question 1 may open naturally.
 - For question 2 or later, do not greet the candidate, reintroduce yourself, say "great/nice to meet you", say "thanks", or use an opener like "for this next question".
-- If no answer exists yet because the question was pre-generated, ask a clean standalone follow-up without pretending the candidate said something.
+
 Role research behavior:
 - If the role is not a common preset, silently infer signals from 2-3 representative job descriptions for "${input.session.role}".
 - Use likely responsibilities, tools, seniority expectations, success metrics, and common interview loops for that job.
@@ -415,7 +464,7 @@ Difficulty behavior:
 - Hard: rigorous, skeptical, senior-style questions that pressure-test evidence and judgment.
 Memory: ${JSON.stringify(input.session.memory)}
 Current stage: ${input.session.currentStage}
-Previous turns: ${JSON.stringify(
+Full turn history (for extra continuity if needed): ${JSON.stringify(
     input.session.turns.map((turn) => ({
       question: turn.question,
       answer: turn.transcript,
@@ -424,24 +473,10 @@ Previous turns: ${JSON.stringify(
       weakAreas: turn.evaluation.missingResumeHighlights
     }))
   )}
-Prepared questions to avoid: ${JSON.stringify(preparedQuestions)}
-Most recent raw answer not yet reflected in feedback: ${input.pendingAnswer?.trim() || "None"}
-Resume context: ${JSON.stringify(input.session.resume)}
+Resume / CV context: ${JSON.stringify(input.session.resume)}
 `);
 
   return openAiResponse?.trim() || fallback;
-}
-
-export async function generateInitialQuestions(session: InterviewSession) {
-  const [firstQuestion, secondQuestion] = await Promise.all([
-    generateQuestion({ session, targetTurnIndex: 0 }),
-    generateQuestion({ session, targetTurnIndex: 1 })
-  ]);
-
-  return [
-    firstQuestion,
-    secondQuestion === firstQuestion ? buildFallbackQuestion(session, { targetTurnIndex: 1 }) : secondQuestion
-  ];
 }
 
 export function getNextQueuedQuestionTargetIndex(session: InterviewSession) {
@@ -463,6 +498,7 @@ export function appendQueuedQuestion(session: InterviewSession, question: string
 
 export async function evaluateAnswer(input: {
   role: JobRole;
+  difficulty: InterviewSession["difficulty"];
   transcript: string;
   speechMetrics: SpeechMetrics;
   faceMetrics: InterviewTurn["faceMetrics"];
@@ -489,12 +525,17 @@ Be specific and slightly more realistic than a tutoring app.
 Write interviewerReaction as the interviewer's first-person internal monologue. Use language like "I'm concerned...", "I'm looking for...", or "I trust...".
 Do not write detached phrases like "the interviewer likely", "the interviewer might", or "the interviewer would".
 Keep interviewerReaction to 1-3 direct sentences.
+Difficulty calibration (critical):
+- Easy: supportive and coach-like. Be lenient on rough edges, and only flag major misses.
+- Medium: realistic and professionally skeptical. Do NOT be overly generous. Reserve 85+ scores for clearly exceptional, evidence-backed answers.
+- Hard: strict senior-interviewer bar. Be difficult to impress, aggressively penalize vague claims, and require tradeoffs, ownership, and measurable impact for strong scores.
 Memory: ${JSON.stringify(input.memory)}
 Candidate resume context: ${JSON.stringify(input.resume)}
 Previous turns: ${JSON.stringify(input.previousTurns)}
 Transcript: ${input.transcript}
 Speech metrics: ${JSON.stringify(input.speechMetrics)}
 Face metrics: ${JSON.stringify(input.faceMetrics)}
+Interview difficulty: ${input.difficulty}
 Role expectations: ${JSON.stringify(getRoleExpectations(input.role))}
 `);
 
@@ -556,7 +597,7 @@ export function buildSession(role: JobRole, difficulty: InterviewSession["diffic
     currentStage: "Applied",
     hiringOutcome: null,
     liveConfidence: 50,
-    memory: createInitialMemory()
+    memory: createInitialMemory(difficulty)
   };
 }
 

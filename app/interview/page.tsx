@@ -86,7 +86,6 @@ export default function InterviewPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [mainVideo, setMainVideo] = useState<MainVideo>("interviewer");
   const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
-  const [isPrefetchingQuestion, setIsPrefetchingQuestion] = useState(false);
   const [pendingAnswerCount, setPendingAnswerCount] = useState(0);
   const [answerSecondsRemaining, setAnswerSecondsRemaining] = useState(ANSWER_SECONDS);
   const sessionRef = useRef<InterviewSession | null>(null);
@@ -95,7 +94,6 @@ export default function InterviewPage() {
   const shouldDelayNextQuestionRef = useRef(false);
   const autoSubmittedRef = useRef(false);
   const submitAnswerRef = useRef<(() => void) | null>(null);
-  const prefetchKeyRef = useRef<string | null>(null);
   const answerSubmissionChainRef = useRef<Promise<InterviewSession | null>>(Promise.resolve(null));
 
   useEffect(() => {
@@ -154,68 +152,6 @@ export default function InterviewPage() {
       stopListening();
     }
   }, [session, showTranscript, speechIsListening, speechIsSupported, startListening, stopListening]);
-
-  const prefetchNextQuestion = useCallback(
-    async (baseSession: InterviewSession, pendingAnswer: string, targetTurnIndex?: number) => {
-      const questionQueue = baseSession.questionQueue ?? [];
-      const resolvedTargetTurnIndex = targetTurnIndex ?? baseSession.turns.length + 1 + questionQueue.length;
-
-      if (baseSession.interviewComplete || questionQueue.length > 0 || resolvedTargetTurnIndex >= TOTAL_QUESTIONS) {
-        return;
-      }
-
-      const prefetchKey = `${baseSession.id}:${resolvedTargetTurnIndex}:${baseSession.currentQuestion ?? ""}`;
-
-      if (prefetchKeyRef.current === prefetchKey) {
-        return;
-      }
-
-      prefetchKeyRef.current = prefetchKey;
-      setIsPrefetchingQuestion(true);
-
-      try {
-        const response = await fetch("/api/interview/question/prefetch", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json"
-          },
-          body: JSON.stringify({
-            session: baseSession,
-            pendingAnswer,
-            targetTurnIndex: resolvedTargetTurnIndex
-          })
-        });
-
-        if (!response.ok) {
-          return;
-        }
-
-        const data = (await response.json()) as { session: InterviewSession };
-        const currentSession = sessionRef.current;
-
-        if (
-          currentSession &&
-          currentSession.id === baseSession.id &&
-          currentSession.currentQuestion === baseSession.currentQuestion &&
-          (currentSession.questionQueue ?? []).length === 0
-        ) {
-          const mergedSession = {
-            ...currentSession,
-            questionQueue: data.session.questionQueue ?? []
-          };
-
-          sessionRef.current = mergedSession;
-          setSession(mergedSession);
-        }
-      } finally {
-        if (prefetchKeyRef.current === prefetchKey) {
-          prefetchKeyRef.current = null;
-          setIsPrefetchingQuestion(false);
-        }
-      }
-    },
-    [setSession]
-  );
 
   const queueAnswerSubmission = useCallback(
     (input: {
@@ -315,17 +251,7 @@ export default function InterviewPage() {
     }
 
     const transcriptForEvaluation = visibleTranscript.trim();
-    const questionQueue = session.questionQueue ?? [];
-    const [readyQuestion, ...remainingQuestionQueue] = questionQueue;
     const isFinalQuestion = currentQuestionNumber >= TOTAL_QUESTIONS;
-    const optimisticSession =
-      !isFinalQuestion
-        ? {
-            ...session,
-            currentQuestion: readyQuestion ?? null,
-            questionQueue: remainingQuestionQueue
-          }
-        : null;
 
     setIsSubmitting(true);
     setSubmitError(null);
@@ -336,35 +262,11 @@ export default function InterviewPage() {
     setAnswerSecondsRemaining(ANSWER_SECONDS);
     autoSubmittedRef.current = false;
 
-    if (optimisticSession) {
-      shouldDelayNextQuestionRef.current = true;
-      setPendingAnswerCount((current) => current + 1);
-      sessionRef.current = optimisticSession;
-      setSession(optimisticSession);
-      setIsSubmitting(false);
-
-      if (readyQuestion) {
-        const nextTargetTurnIndex = session.turns.length + pendingAnswerCount + 2 + remainingQuestionQueue.length;
-        void prefetchNextQuestion(optimisticSession, transcriptForEvaluation, nextTargetTurnIndex);
-      }
-      void queueAnswerSubmission({
-        submissionSession: session,
-        transcriptForEvaluation,
-        durationSeconds: answerDurationSeconds,
-        speechMetrics,
-        faceMetrics: face.metrics,
-        questionBeingAnswered: session.currentQuestion,
-        questionQueueForSubmission: questionQueue,
-        optimisticSession,
-        shouldNavigateToResults: false
-      });
-      return;
-    }
-
     setPendingAnswerCount((current) => current + 1);
     if (!isFinalQuestion) {
       shouldDelayNextQuestionRef.current = true;
     }
+
     void queueAnswerSubmission({
       submissionSession: session,
       transcriptForEvaluation,
@@ -372,8 +274,8 @@ export default function InterviewPage() {
       speechMetrics,
       faceMetrics: face.metrics,
       questionBeingAnswered: session.currentQuestion,
-      questionQueueForSubmission: questionQueue,
-      optimisticSession,
+      questionQueueForSubmission: [],
+      optimisticSession: null,
       shouldNavigateToResults: isFinalQuestion
     }).finally(() => {
       setIsSubmitting(false);
@@ -383,13 +285,10 @@ export default function InterviewPage() {
     currentQuestionNumber,
     face.metrics,
     isSubmitting,
-    pendingAnswerCount,
-    prefetchNextQuestion,
     queueAnswerSubmission,
     resetTranscript,
     session,
     setCaptureEnabled,
-    setSession,
     speechMetrics,
     stop,
     visibleTranscript
@@ -463,27 +362,6 @@ export default function InterviewPage() {
       window.clearTimeout(timer);
     };
   }, [answerSecondsRemaining, session?.interviewComplete, showTranscript]);
-
-  useEffect(() => {
-    if (!session || !showTranscript || isSubmitting || isPrefetchingQuestion || (session.questionQueue ?? []).length > 0) {
-      return;
-    }
-
-    const wordCount = visibleTranscript.split(/\s+/).filter(Boolean).length;
-
-    if (wordCount < 12) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      const targetTurnIndex = session.turns.length + pendingAnswerCount + 1 + (session.questionQueue ?? []).length;
-      void prefetchNextQuestion(session, visibleTranscript, targetTurnIndex);
-    }, 700);
-
-    return () => {
-      window.clearTimeout(timer);
-    };
-  }, [isPrefetchingQuestion, isSubmitting, pendingAnswerCount, prefetchNextQuestion, session, showTranscript, visibleTranscript]);
 
   const dismissCoachingThought = useCallback((id: string) => {
     setCoachingThoughts((current) => current.filter((item) => item.id !== id));
@@ -666,7 +544,8 @@ export default function InterviewPage() {
                             void face.selectCamera(index);
                             saveMediaDevicePreferences({
                               audioInputId: loadMediaDevicePreferences()?.audioInputId ?? "",
-                              videoInputId: device.deviceId
+                              videoInputId: device.deviceId,
+                              mediaPermissionGranted: true
                             });
                             setPreferredVideoDeviceId(device.deviceId);
                             setCameraMenuOpen(false);

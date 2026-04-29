@@ -57,6 +57,133 @@ describe("buildFallbackQuestion", () => {
 
     expect(question).toContain("tradeoff");
   });
+
+  it("question 4 fallback weaves in feedback from the prior evaluated answer", () => {
+    const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const session = {
+      ...base,
+      turns: [
+        {
+          id: "t1",
+          question: "Q1",
+          transcript: "First answer text here.",
+          durationSeconds: 10,
+          speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
+          faceMetrics: { eyeContact: 80, headStability: 80, engagementScore: 80 },
+          evaluation: {
+            clarity: 70,
+            relevance: 70,
+            structure: 70,
+            confidence: 70,
+            engagement: 70,
+            liveConfidence: 70,
+            feedback: "Need more metrics from Q1.",
+            missedOpportunity: "",
+            missingResumeHighlights: [],
+            missedOpportunityDetails: [],
+            improvedAnswer: "",
+            rewriteHighlights: [],
+            interviewerReaction: "",
+            perceivedTone: "",
+            pressureLabel: ""
+          }
+        },
+        {
+          id: "t2",
+          question: "Q2",
+          transcript: "Second answer about tradeoffs.",
+          durationSeconds: 10,
+          speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
+          faceMetrics: { eyeContact: 80, headStability: 80, engagementScore: 80 },
+          evaluation: {
+            clarity: 70,
+            relevance: 70,
+            structure: 70,
+            confidence: 70,
+            engagement: 70,
+            liveConfidence: 70,
+            feedback: "Feedback after Q2.",
+            missedOpportunity: "",
+            missingResumeHighlights: [],
+            missedOpportunityDetails: [],
+            improvedAnswer: "",
+            rewriteHighlights: [],
+            interviewerReaction: "",
+            perceivedTone: "",
+            pressureLabel: ""
+          }
+        }
+      ]
+    };
+
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 3 });
+
+    expect(question).toContain("Need more metrics from Q1.");
+  });
+
+  it("question 3 fallback remains a fresh question", () => {
+    const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const session = {
+      ...base,
+      turns: [
+        {
+          id: "t1",
+          question: "Q1",
+          transcript: "First answer text here.",
+          durationSeconds: 10,
+          speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
+          faceMetrics: { eyeContact: 80, headStability: 80, engagementScore: 80 },
+          evaluation: {
+            clarity: 70,
+            relevance: 70,
+            structure: 70,
+            confidence: 70,
+            engagement: 70,
+            liveConfidence: 70,
+            feedback: "Need more metrics from Q1.",
+            missedOpportunity: "",
+            missingResumeHighlights: [],
+            missedOpportunityDetails: [],
+            improvedAnswer: "",
+            rewriteHighlights: [],
+            interviewerReaction: "",
+            perceivedTone: "",
+            pressureLabel: ""
+          }
+        },
+        {
+          id: "t2",
+          question: "Q2",
+          transcript: "Second answer about tradeoffs.",
+          durationSeconds: 10,
+          speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
+          faceMetrics: { eyeContact: 80, headStability: 80, engagementScore: 80 },
+          evaluation: {
+            clarity: 70,
+            relevance: 70,
+            structure: 70,
+            confidence: 70,
+            engagement: 70,
+            liveConfidence: 70,
+            feedback: "Feedback after Q2.",
+            missedOpportunity: "",
+            missingResumeHighlights: [],
+            missedOpportunityDetails: [],
+            improvedAnswer: "",
+            rewriteHighlights: [],
+            interviewerReaction: "",
+            perceivedTone: "",
+            pressureLabel: ""
+          }
+        }
+      ]
+    };
+
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 2 });
+
+    expect(question).not.toContain("Earlier you mentioned");
+    expect(question).not.toContain("Need more metrics from Q1.");
+  });
 });
 
 describe("question queue helpers", () => {

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { applyTurnToSession, buildFallbackQuestion, evaluateAnswer } from "@/lib/interview-engine";
+import { applyTurnToSession, evaluateAnswer, generateQuestion } from "@/lib/interview-engine";
 import { InterviewSession, InterviewTurn } from "@/lib/interview-types";
 
 export async function POST(request: Request) {
@@ -11,10 +11,9 @@ export async function POST(request: Request) {
     faceMetrics: InterviewTurn["faceMetrics"];
   };
 
-  const questionQueue = body.session.questionQueue ?? [];
-  const [readyQuestion, ...remainingQuestionQueue] = questionQueue;
   const evaluation = await evaluateAnswer({
     role: body.session.role,
+    difficulty: body.session.difficulty,
     transcript: body.transcript,
     speechMetrics: body.speechMetrics,
     faceMetrics: body.faceMetrics,
@@ -36,17 +35,23 @@ export async function POST(request: Request) {
   const nextSession = applyTurnToSession(
     {
       ...body.session,
-      questionQueue: remainingQuestionQueue
+      questionQueue: []
     },
     turn
   );
-  const nextQuestion = nextSession.interviewComplete ? null : readyQuestion ?? buildFallbackQuestion(nextSession);
+
+  const nextQuestion = nextSession.interviewComplete
+    ? null
+    : await generateQuestion({
+        session: nextSession,
+        targetTurnIndex: nextSession.turns.length
+      });
 
   return NextResponse.json({
     session: {
       ...nextSession,
       currentQuestion: nextQuestion,
-      questionQueue: remainingQuestionQueue
+      questionQueue: []
     },
     evaluation
   });

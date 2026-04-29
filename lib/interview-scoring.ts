@@ -3,6 +3,7 @@ import {
   FaceMetrics,
   FunnelOutcome,
   HiringStage,
+  InterviewDifficulty,
   InterviewMemory,
   InterviewTurn,
   JobRole,
@@ -171,14 +172,22 @@ export function deriveHiringOutcome(overallScore: number): FunnelOutcome {
   return "Rejected";
 }
 
-export function createInitialMemory(): InterviewMemory {
+export function createInitialMemory(difficulty: InterviewDifficulty = "Medium"): InterviewMemory {
+  const strictnessByDifficulty: Record<InterviewDifficulty, number> = {
+    Easy: 42,
+    Medium: 62,
+    Hard: 78
+  };
+  const strictness = strictnessByDifficulty[difficulty] ?? strictnessByDifficulty.Medium;
+
   return {
     strengthSignals: [],
     weakAreas: [],
     missingResumePoints: [],
     toneSummary: "Unknown",
-    strictness: 55,
-    interviewerMood: "Professional and observant"
+    strictness,
+    interviewerMood:
+      strictness >= 70 ? "Sharper and more skeptical" : strictness <= 45 ? "Encouraging and supportive" : "Professional and observant"
   };
 }
 

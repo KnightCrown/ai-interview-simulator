@@ -1,6 +1,7 @@
 export interface MediaDevicePreferences {
   audioInputId: string;
   videoInputId: string;
+  mediaPermissionGranted?: boolean;
 }
 
 const STORAGE_KEY = "ai-interview-simulator-media-devices";
@@ -10,7 +11,7 @@ export function loadMediaDevicePreferences(): MediaDevicePreferences | null {
     return null;
   }
 
-  const stored = window.sessionStorage.getItem(STORAGE_KEY);
+  const stored = window.localStorage.getItem(STORAGE_KEY);
   if (!stored) {
     return null;
   }
@@ -20,7 +21,8 @@ export function loadMediaDevicePreferences(): MediaDevicePreferences | null {
 
     return {
       audioInputId: typeof parsed.audioInputId === "string" ? parsed.audioInputId : "",
-      videoInputId: typeof parsed.videoInputId === "string" ? parsed.videoInputId : ""
+      videoInputId: typeof parsed.videoInputId === "string" ? parsed.videoInputId : "",
+      mediaPermissionGranted: parsed.mediaPermissionGranted === true
     };
   } catch {
     return null;
@@ -32,5 +34,14 @@ export function saveMediaDevicePreferences(preferences: MediaDevicePreferences) 
     return;
   }
 
-  window.sessionStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(preferences));
+}
+
+export function markMediaPermissionGranted() {
+  const current = loadMediaDevicePreferences();
+  saveMediaDevicePreferences({
+    audioInputId: current?.audioInputId ?? "",
+    videoInputId: current?.videoInputId ?? "",
+    mediaPermissionGranted: true
+  });
 }
