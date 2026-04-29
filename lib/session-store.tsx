@@ -18,7 +18,11 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const stored = window.sessionStorage.getItem(STORAGE_KEY);
     if (stored) {
-      setSessionState(JSON.parse(stored) as InterviewSession);
+      const parsed = JSON.parse(stored) as InterviewSession;
+      setSessionState({
+        ...parsed,
+        difficulty: parsed.difficulty ?? "Medium"
+      });
     }
   }, []);
 

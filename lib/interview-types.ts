@@ -1,10 +1,5 @@
-export type JobRole =
-  | "Software Engineer"
-  | "Product Manager"
-  | "Data Analyst"
-  | "UX Designer"
-  | "Marketing Manager";
-
+export type JobRole = string;
+export type InterviewDifficulty = "Easy" | "Medium" | "Hard";
 export type ResumeMode = "Use Sample Resume" | "Skip Resume";
 export type HiringStage = "Applied" | "Phone Screen" | "Technical Round" | "Final Round" | "Decision";
 export type FunnelOutcome = "Selected" | "Borderline" | "Rejected";
@@ -76,13 +71,13 @@ export interface InterviewMemory {
 export interface InterviewSession {
   id: string;
   role: JobRole;
+  difficulty: InterviewDifficulty;
   resumeMode: ResumeMode;
   resume: ResumeProfile | null;
   startedAt: string;
   turns: InterviewTurn[];
   currentQuestion: string | null;
   interviewComplete: boolean;
-  demoMode: boolean;
   currentStage: HiringStage;
   hiringOutcome: FunnelOutcome | null;
   liveConfidence: number;

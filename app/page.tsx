@@ -5,31 +5,53 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { buildSafeResumePreview } from "@/lib/interview-scoring";
 import { JOB_ROLES, SAMPLE_RESUME } from "@/lib/sample-data";
-import { InterviewSession, JobRole, ResumeMode } from "@/lib/interview-types";
+import { InterviewDifficulty, InterviewSession, ResumeMode } from "@/lib/interview-types";
 import { useInterviewSession } from "@/lib/session-store";
 
 export default function LandingPage() {
   const router = useRouter();
   const { setSession } = useInterviewSession();
-  const [role, setRole] = useState<JobRole>("Software Engineer");
+  const [selectedRole, setSelectedRole] = useState("Software Engineer");
+  const [customRole, setCustomRole] = useState("");
+  const [difficulty, setDifficulty] = useState<InterviewDifficulty>("Medium");
   const [resumeMode, setResumeMode] = useState<ResumeMode>("Use Sample Resume");
   const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
   const sampleResume = buildSafeResumePreview(SAMPLE_RESUME);
 
-  const startInterview = async (demoMode = false) => {
+  const startInterview = async () => {
+    const role = selectedRole === "Other" ? customRole : selectedRole;
+    const normalizedRole = role.trim();
+    if (!normalizedRole) {
+      setStartError("Enter a job role before starting.");
+      return;
+    }
+
     setIsStarting(true);
+    setStartError(null);
 
-    const response = await fetch("/api/interview/start", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ role, resumeMode, demoMode })
-    });
+    try {
+      const response = await fetch("/api/interview/start", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ role: normalizedRole, difficulty, resumeMode })
+      });
 
-    const data = (await response.json()) as { session: InterviewSession };
-    setSession(data.session);
-    router.push("/interview");
+      if (!response.ok) {
+        const errorData = (await response.json()) as { error?: string };
+        throw new Error(errorData.error ?? "Could not start the interview.");
+      }
+
+      const data = (await response.json()) as { session: InterviewSession };
+      setSession(data.session);
+      router.push("/interview");
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Could not start the interview.");
+    } finally {
+      setIsStarting(false);
+    }
   };
 
   return (
@@ -68,14 +90,17 @@ export default function LandingPage() {
             className="mt-6 space-y-5"
             onSubmit={(event) => {
               event.preventDefault();
-              void startInterview(false);
+              void startInterview();
             }}
           >
             <label className="block text-sm font-medium text-slate-700">
               Job role
               <select
-                value={role}
-                onChange={(event) => setRole(event.target.value as JobRole)}
+                value={selectedRole}
+                onChange={(event) => {
+                  setSelectedRole(event.target.value);
+                  setStartError(null);
+                }}
                 className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
               >
                 {JOB_ROLES.map((jobRole) => (
@@ -85,6 +110,46 @@ export default function LandingPage() {
                 ))}
               </select>
             </label>
+
+            {selectedRole === "Other" ? (
+              <label className="block text-sm font-medium text-slate-700">
+                Custom job role
+                <input
+                  value={customRole}
+                  onChange={(event) => {
+                    setCustomRole(event.target.value);
+                    setStartError(null);
+                  }}
+                  placeholder="Example: Healthcare Data Scientist"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
+                />
+              </label>
+            ) : null}
+
+            <fieldset className="space-y-3">
+              <legend className="text-sm font-medium text-slate-700">Question difficulty</legend>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {(["Easy", "Medium", "Hard"] as InterviewDifficulty[]).map((option) => (
+                  <label
+                    key={option}
+                    className={`cursor-pointer rounded-2xl border px-4 py-3 text-center text-sm font-semibold transition ${
+                      difficulty === option
+                        ? "border-teal-500 bg-teal-50 text-teal-800"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
+                    <input
+                      checked={difficulty === option}
+                      onChange={() => setDifficulty(option)}
+                      type="radio"
+                      name="difficulty"
+                      className="sr-only"
+                    />
+                    {option}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
 
             <fieldset className="space-y-3">
               <legend className="text-sm font-medium text-slate-700">Resume option</legend>
@@ -116,27 +181,19 @@ export default function LandingPage() {
               <p className="mt-2">{sampleResume.skills.join(" / ")}</p>
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-2">
-              <button
-                type="submit"
-                disabled={isStarting}
-                className="rounded-2xl bg-ink px-5 py-3 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                {isStarting ? "Preparing..." : "Start interview"}
-              </button>
-              <button
-                type="button"
-                disabled={isStarting}
-                onClick={() => void startInterview(true)}
-                className="rounded-2xl bg-teal-600 px-5 py-3 text-base font-semibold text-white transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-70"
-              >
-                Demo mode
-              </button>
-            </div>
+            {startError ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-900">{startError}</p> : null}
+
+            <button
+              type="submit"
+              disabled={isStarting}
+              className="w-full rounded-2xl bg-ink px-5 py-3 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+            >
+              {isStarting ? "Preparing..." : "Start interview"}
+            </button>
           </form>
 
           <p className="mt-4 text-xs text-slate-500">
-            Sensitive values are not hardcoded. Add <code>OPENAI_API_KEY</code> in a local env file such as <code>.env.local</code> if you want live OpenAI responses.
+            Live OpenAI responses run through the server using <code>OPENAI_API_KEY</code> from local environment configuration.
           </p>
         </div>
       </section>

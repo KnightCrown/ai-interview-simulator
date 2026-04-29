@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { buildFallbackEvaluation, buildFallbackFinalReport } from "@/lib/interview-engine";
+import {
+  buildFallbackEvaluation,
+  buildFallbackFinalReport,
+  buildFallbackQuestion,
+  buildSession,
+  normalizeAnswerEvaluation,
+  normalizeFinalReport
+} from "@/lib/interview-engine";
 import { advanceHiringStage, liveConfidenceFromSignals } from "@/lib/interview-scoring";
 import { InterviewSession } from "@/lib/interview-types";
-import { SAMPLE_RESUME } from "@/lib/sample-data";
+import { JOB_ROLES, SAMPLE_RESUME, getRoleExpectations } from "@/lib/sample-data";
 
 describe("buildFallbackEvaluation", () => {
   it("surfaces aggressive missed-opportunity details when the transcript omits resume highlights", () => {
@@ -28,6 +35,101 @@ describe("buildFallbackEvaluation", () => {
     expect(evaluation.missedOpportunityDetails[0]?.impactScoreIncrease).toBeGreaterThan(0);
     expect(evaluation.interviewerReaction).toContain("specific");
     expect(evaluation.liveConfidence).toBeGreaterThan(0);
+  });
+});
+
+describe("buildFallbackQuestion", () => {
+  it("adapts hard interview questions to be more rigorous", () => {
+    const session = buildSession("Machine Learning Engineer", "Hard", "Skip Resume", null);
+    const question = buildFallbackQuestion(session);
+
+    expect(question).toContain("Machine Learning Engineer");
+    expect(question.toLowerCase()).toMatch(/challenging|skeptical|evidence|tradeoff|depth/);
+  });
+});
+
+describe("custom roles", () => {
+  it("keeps Other available while offering IT role presets", () => {
+    expect(JOB_ROLES).toContain("Other");
+    expect(JOB_ROLES).toContain("IT Support Specialist");
+    expect(JOB_ROLES).toContain("Cybersecurity Analyst");
+    expect(JOB_ROLES).toContain("Cloud Engineer");
+  });
+
+  it("uses default role signals for custom roles", () => {
+    expect(getRoleExpectations("Healthcare Data Scientist")).toContain("role-specific examples");
+  });
+
+  it("supports evaluating typed roles that are not in the preset list", () => {
+    const evaluation = buildFallbackEvaluation({
+      role: "Robotics Program Manager",
+      transcript: "I owned a cross-functional launch, aligned stakeholders, and improved delivery by 20 percent.",
+      speechMetrics: {
+        fillerCount: 0,
+        fillerWords: [],
+        speakingPace: 130
+      },
+      faceMetrics: {
+        eyeContact: 82,
+        headStability: 80,
+        engagementScore: 84
+      },
+      resume: null
+    });
+
+    expect(evaluation.relevance).toBeGreaterThan(0);
+    expect(evaluation.feedback).toContain("Robotics Program Manager");
+  });
+});
+
+describe("LLM response normalization", () => {
+  it("coerces malformed evaluation list fields into render-safe arrays", () => {
+    const fallback = buildFallbackEvaluation({
+      role: "Software Engineer",
+      transcript: "I built a React dashboard and improved performance by 30 percent.",
+      speechMetrics: {
+        fillerCount: 0,
+        fillerWords: [],
+        speakingPace: 130
+      },
+      faceMetrics: {
+        eyeContact: 80,
+        headStability: 78,
+        engagementScore: 82
+      },
+      resume: SAMPLE_RESUME
+    });
+
+    const evaluation = normalizeAnswerEvaluation(
+      {
+        clarity: "87" as unknown as number,
+        rewriteHighlights: "Added clearer impact and role alignment." as unknown as string[],
+        missingResumeHighlights: "Python" as unknown as string[],
+        missedOpportunityDetails: "Mention backend credibility." as unknown as typeof fallback.missedOpportunityDetails
+      },
+      fallback
+    );
+
+    expect(evaluation.clarity).toBe(87);
+    expect(evaluation.rewriteHighlights).toEqual(["Added clearer impact and role alignment."]);
+    expect(evaluation.missingResumeHighlights).toEqual(["Python"]);
+    expect(Array.isArray(evaluation.missedOpportunityDetails)).toBe(true);
+  });
+
+  it("coerces malformed final report list fields into render-safe arrays", () => {
+    const fallback = buildFallbackFinalReport(buildSession("Software Engineer", "Medium", "Skip Resume", null));
+    const report = normalizeFinalReport(
+      {
+        strengths: "Clear communication" as unknown as string[],
+        interviewerNotes: "Needs more metrics" as unknown as string[],
+        overallScore: "70" as unknown as number
+      },
+      fallback
+    );
+
+    expect(report.overallScore).toBe(70);
+    expect(report.strengths).toEqual(["Clear communication"]);
+    expect(report.interviewerNotes).toEqual(["Needs more metrics"]);
   });
 });
 
@@ -63,12 +165,12 @@ describe("buildFallbackFinalReport", () => {
     const session: InterviewSession = {
       id: "session-1",
       role: "Software Engineer",
+      difficulty: "Medium",
       resumeMode: "Use Sample Resume",
       resume: SAMPLE_RESUME,
       startedAt: new Date().toISOString(),
       currentQuestion: null,
       interviewComplete: true,
-      demoMode: false,
       currentStage: "Final Round",
       hiringOutcome: "Selected",
       liveConfidence: 79,

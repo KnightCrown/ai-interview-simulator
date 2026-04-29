@@ -181,7 +181,8 @@ export function InterviewerAvatar({
   isSpeaking,
   compact = false,
   onClick,
-  title
+  title,
+  showLabels = true
 }: {
   className?: string;
   mouthLevel: number;
@@ -190,21 +191,25 @@ export function InterviewerAvatar({
   compact?: boolean;
   onClick?: () => void;
   title?: string;
+  showLabels?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`relative overflow-hidden rounded-[1.8rem] border border-slate-200 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.24),transparent_36%),linear-gradient(180deg,#020617_0%,#0f172a_100%)] text-left shadow-panel ${className}`}
+      className={`relative overflow-hidden rounded-[1.8rem] border border-slate-200 bg-[radial-gradient(circle_at_top,rgba(56,189,248,0.24),transparent_36%),linear-gradient(180deg,#020617_0%,#0f172a_100%)] text-left shadow-panel ${onClick ? "" : "cursor-default"} ${className}`}
+      aria-label={title ?? "AI interviewer"}
     >
-      <div className="absolute left-4 top-4 z-10">
-        <div className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-100 backdrop-blur">
-          {title ?? "AI interviewer"}
+      {showLabels ? (
+        <div className="absolute left-4 top-4 z-10">
+          <div className="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-100 backdrop-blur">
+            {title ?? "AI interviewer"}
+          </div>
+          <div className="mt-2 rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200 backdrop-blur">
+            {isSpeaking ? "Speaking live" : "Listening"}
+          </div>
         </div>
-        <div className="mt-2 rounded-full bg-white/10 px-3 py-1 text-xs text-slate-200 backdrop-blur">
-          {isSpeaking ? "Speaking live" : "Listening"}
-        </div>
-      </div>
+      ) : null}
 
       <div className={compact ? "h-full min-h-[180px] w-full" : "h-full min-h-[360px] w-full"}>
         <Canvas camera={{ position: [0, 0.45, 4.8], fov: compact ? 34 : 30 }}>

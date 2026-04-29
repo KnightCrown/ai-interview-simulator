@@ -11,7 +11,6 @@ import {
 } from "@/lib/interview-types";
 import {
   advanceHiringStage,
-  buildDemoTranscript,
   buildImprovedAnswer,
   buildMissedOpportunityDetails,
   buildRewriteHighlights,
@@ -28,7 +27,7 @@ import {
   TURN_LIMIT,
   updateMemory
 } from "@/lib/interview-scoring";
-import { ROLE_EXPECTATIONS } from "@/lib/sample-data";
+import { getRoleExpectations } from "@/lib/sample-data";
 
 function buildInterviewerReaction(input: {
   role: JobRole;
@@ -54,17 +53,33 @@ function buildInterviewerReaction(input: {
 }
 
 export function buildFallbackQuestion(session: InterviewSession) {
-  const { role, turns, memory } = session;
+  const { role, turns, memory, difficulty } = session;
   const stage = turns.length;
   const previousAnswer = turns.at(-1)?.transcript ?? "";
   const previousWeakArea = memory.weakAreas[0];
+  const roleSignals = getRoleExpectations(role).join(", ");
+  const difficultyDirections = {
+    Easy: {
+      opening: "a clear, approachable",
+      followUp: "Keep the prompt focused and confidence-building."
+    },
+    Medium: {
+      opening: "a realistic",
+      followUp: "Ask for concrete examples, tradeoffs, and impact."
+    },
+    Hard: {
+      opening: "a challenging",
+      followUp: "Press for depth, ambiguity, tradeoffs, and specific evidence."
+    }
+  } satisfies Record<InterviewSession["difficulty"], { opening: string; followUp: string }>;
+  const direction = difficultyDirections[difficulty] ?? difficultyDirections.Medium;
 
   const prompts: Record<number, string> = {
-    0: `Walk me through a project that best proves you can succeed as a ${role}.`,
-    1: `Earlier you mentioned that work. What tradeoff did you have to manage, and how did you decide?`,
-    2: `If that project started slipping, how would you communicate risk and recover momentum?`,
-    3: `You have been strongest when you sound concrete. What would you do differently if you revisited that situation today?`,
-    4: `Final question: why should a hiring team move you to the next round for this ${role} role?`
+    0: `Walk me through ${direction.opening} project that best proves you can succeed as a ${role}. I am listening for ${roleSignals}.`,
+    1: `Earlier you mentioned that work. What tradeoff did you have to manage, and how did you decide? ${direction.followUp}`,
+    2: `If that project started slipping, how would you communicate risk and recover momentum in a ${role} role? ${direction.followUp}`,
+    3: `You have been strongest when you sound concrete. What would you do differently if you revisited that situation today? ${direction.followUp}`,
+    4: `Final question: why should a hiring team move you to the next round for this ${role} role? ${difficulty === "Hard" ? "Give me evidence that would survive a skeptical debrief." : ""}`
   };
 
   const prompt = prompts[stage] ?? prompts[4];
@@ -90,7 +105,7 @@ export function buildFallbackEvaluation(input: {
   previousWeakAreas?: string[];
 }): AnswerEvaluation {
   const { role, transcript, speechMetrics, faceMetrics, resume, strictness = 55, previousWeakAreas = [] } = input;
-  const expectations = ROLE_EXPECTATIONS[role];
+  const expectations = getRoleExpectations(role);
   const missingResumeHighlights = inferMissingHighlights(transcript, resume);
   const clarity = clampScore(
     transcript.split(/\s+/).filter(Boolean).length * 2 +
@@ -240,13 +255,147 @@ async function generateWithOpenAI(prompt: string) {
   return response.output_text;
 }
 
+function parseJsonObject<T>(content: string): Partial<T> | null {
+  const trimmed = content.trim();
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fencedMatch?.[1] ?? trimmed;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+
+  if (start === -1 || end === -1 || end <= start) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(candidate.slice(start, end + 1)) as Partial<T>;
+  } catch {
+    return null;
+  }
+}
+
+function asString(value: unknown, fallback: string) {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function asScore(value: unknown, fallback: number) {
+  const numeric = typeof value === "number" ? value : typeof value === "string" ? Number(value) : Number.NaN;
+  return Number.isFinite(numeric) ? clampScore(numeric, 1, 100) : fallback;
+}
+
+function asStringArray(value: unknown, fallback: string[]) {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => {
+        if (typeof item === "string") return item.trim();
+        if (item && typeof item === "object" && "text" in item) return String(item.text).trim();
+        return "";
+      })
+      .filter(Boolean);
+
+    return items.length > 0 ? items : fallback;
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    const items = value
+      .split(/\n|;|•/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+
+    return items.length > 0 ? items : [value.trim()];
+  }
+
+  return fallback;
+}
+
+function asMissedOpportunityDetails(value: unknown, fallback: AnswerEvaluation["missedOpportunityDetails"]) {
+  if (!Array.isArray(value)) {
+    return fallback;
+  }
+
+  const details = value
+    .map((item) => {
+      if (!item || typeof item !== "object") {
+        return null;
+      }
+
+      const detail = item as Record<string, unknown>;
+      return {
+        exactThing: asString(detail.exactThing, ""),
+        source: asString(detail.source, "Interview answer"),
+        whyItMattered: asString(detail.whyItMattered, "It would make the answer more specific and credible."),
+        impactScoreIncrease: asScore(detail.impactScoreIncrease, 10)
+      };
+    })
+    .filter((detail): detail is AnswerEvaluation["missedOpportunityDetails"][number] => Boolean(detail?.exactThing));
+
+  return details.length > 0 ? details : fallback;
+}
+
+export function normalizeAnswerEvaluation(parsed: Partial<AnswerEvaluation>, fallback: AnswerEvaluation): AnswerEvaluation {
+  return {
+    clarity: asScore(parsed.clarity, fallback.clarity),
+    relevance: asScore(parsed.relevance, fallback.relevance),
+    structure: asScore(parsed.structure, fallback.structure),
+    confidence: asScore(parsed.confidence, fallback.confidence),
+    engagement: asScore(parsed.engagement, fallback.engagement),
+    liveConfidence: asScore(parsed.liveConfidence, fallback.liveConfidence),
+    feedback: asString(parsed.feedback, fallback.feedback),
+    missedOpportunity: asString(parsed.missedOpportunity, fallback.missedOpportunity),
+    missingResumeHighlights: asStringArray(parsed.missingResumeHighlights, fallback.missingResumeHighlights),
+    missedOpportunityDetails: asMissedOpportunityDetails(parsed.missedOpportunityDetails, fallback.missedOpportunityDetails),
+    improvedAnswer: asString(parsed.improvedAnswer, fallback.improvedAnswer),
+    rewriteHighlights: asStringArray(parsed.rewriteHighlights, fallback.rewriteHighlights),
+    interviewerReaction: asString(parsed.interviewerReaction, fallback.interviewerReaction),
+    perceivedTone: asString(parsed.perceivedTone, fallback.perceivedTone),
+    pressureLabel: asString(parsed.pressureLabel, fallback.pressureLabel)
+  };
+}
+
+export function normalizeFinalReport(parsed: Partial<FinalReport>, fallback: FinalReport): FinalReport {
+  const hiringLikelihood =
+    parsed.hiringLikelihood === "Pass" || parsed.hiringLikelihood === "Borderline" || parsed.hiringLikelihood === "Fail"
+      ? parsed.hiringLikelihood
+      : fallback.hiringLikelihood;
+  const hiringOutcome =
+    parsed.hiringOutcome === "Selected" || parsed.hiringOutcome === "Borderline" || parsed.hiringOutcome === "Rejected"
+      ? parsed.hiringOutcome
+      : fallback.hiringOutcome;
+
+  return {
+    overallScore: asScore(parsed.overallScore, fallback.overallScore),
+    clarity: asScore(parsed.clarity, fallback.clarity),
+    relevance: asScore(parsed.relevance, fallback.relevance),
+    confidence: asScore(parsed.confidence, fallback.confidence),
+    engagement: asScore(parsed.engagement, fallback.engagement),
+    missedOpportunitySummary: asString(parsed.missedOpportunitySummary, fallback.missedOpportunitySummary),
+    bestImprovedAnswer: asString(parsed.bestImprovedAnswer, fallback.bestImprovedAnswer),
+    hiringLikelihood,
+    hiringOutcome,
+    emotionalSummary: asString(parsed.emotionalSummary, fallback.emotionalSummary),
+    strengths: asStringArray(parsed.strengths, fallback.strengths),
+    weaknesses: asStringArray(parsed.weaknesses, fallback.weaknesses),
+    interviewerNotes: asStringArray(parsed.interviewerNotes, fallback.interviewerNotes),
+    suggestedNextImprovements: asStringArray(parsed.suggestedNextImprovements, fallback.suggestedNextImprovements)
+  };
+}
+
 export async function generateQuestion(input: { session: InterviewSession }) {
   const fallback = buildFallbackQuestion(input.session);
+  const roleExpectations = getRoleExpectations(input.session.role);
   const openAiResponse = await generateWithOpenAI(`
-You are an interviewer running a realistic ${input.session.role} interview.
+You are an interviewer running a realistic ${input.session.role} interview at ${input.session.difficulty} difficulty.
 Behave like a real person with memory, light personality, and evolving strictness.
 Generate exactly one concise interview question.
 Reference previous answers when helpful.
+Role research behavior:
+- If the role is not a common preset, silently infer signals from 2-3 representative job descriptions for "${input.session.role}".
+- Use likely responsibilities, tools, seniority expectations, success metrics, and common interview loops for that job.
+- Do not mention that you performed research. Just ask a practical, role-specific interview question.
+Known role expectation signals: ${JSON.stringify(roleExpectations)}
+Difficulty behavior:
+- Easy: supportive, clear, foundational questions.
+- Medium: realistic behavioral and role-specific questions with tradeoffs.
+- Hard: rigorous, skeptical, senior-style questions that pressure-test evidence and judgment.
 Memory: ${JSON.stringify(input.session.memory)}
 Current stage: ${input.session.currentStage}
 Previous turns: ${JSON.stringify(
@@ -287,6 +436,7 @@ You are grading a ${input.role} interview answer.
 Return strict JSON with keys:
 clarity, relevance, structure, confidence, engagement, liveConfidence, feedback, missedOpportunity, missingResumeHighlights, missedOpportunityDetails, improvedAnswer, rewriteHighlights, interviewerReaction, perceivedTone, pressureLabel
 
+Return only a JSON object. Do not wrap it in markdown.
 Be specific and slightly more realistic than a tutoring app.
 Memory: ${JSON.stringify(input.memory)}
 Candidate resume context: ${JSON.stringify(input.resume)}
@@ -294,7 +444,7 @@ Previous turns: ${JSON.stringify(input.previousTurns)}
 Transcript: ${input.transcript}
 Speech metrics: ${JSON.stringify(input.speechMetrics)}
 Face metrics: ${JSON.stringify(input.faceMetrics)}
-Role expectations: ${JSON.stringify(ROLE_EXPECTATIONS[input.role])}
+Role expectations: ${JSON.stringify(getRoleExpectations(input.role))}
 `);
 
   if (!openAiResponse) {
@@ -302,14 +452,12 @@ Role expectations: ${JSON.stringify(ROLE_EXPECTATIONS[input.role])}
   }
 
   try {
-    const parsed = JSON.parse(openAiResponse) as Partial<AnswerEvaluation>;
-    return {
-      ...fallback,
-      ...parsed,
-      missingResumeHighlights: parsed.missingResumeHighlights ?? fallback.missingResumeHighlights,
-      missedOpportunityDetails: parsed.missedOpportunityDetails ?? fallback.missedOpportunityDetails,
-      rewriteHighlights: parsed.rewriteHighlights ?? fallback.rewriteHighlights
-    };
+    const parsed = parseJsonObject<AnswerEvaluation>(openAiResponse);
+    if (!parsed) {
+      return fallback;
+    }
+
+    return normalizeAnswerEvaluation(parsed, fallback);
   } catch {
     return fallback;
   }
@@ -322,6 +470,7 @@ You are producing a polished final hiring report.
 Return strict JSON with keys:
 overallScore, clarity, relevance, confidence, engagement, missedOpportunitySummary, bestImprovedAnswer, hiringLikelihood, hiringOutcome, emotionalSummary, strengths, weaknesses, interviewerNotes, suggestedNextImprovements
 
+Return only a JSON object. Do not wrap it in markdown.
 Session: ${JSON.stringify(session)}
 `);
 
@@ -330,24 +479,28 @@ Session: ${JSON.stringify(session)}
   }
 
   try {
-    const parsed = JSON.parse(openAiResponse) as FinalReport;
-    return { ...fallback, ...parsed };
+    const parsed = parseJsonObject<FinalReport>(openAiResponse);
+    if (!parsed) {
+      return fallback;
+    }
+
+    return normalizeFinalReport(parsed, fallback);
   } catch {
     return fallback;
   }
 }
 
-export function buildSession(role: JobRole, resumeMode: "Use Sample Resume" | "Skip Resume", resume: ResumeProfile | null, demoMode = false): InterviewSession {
+export function buildSession(role: JobRole, difficulty: InterviewSession["difficulty"], resumeMode: "Use Sample Resume" | "Skip Resume", resume: ResumeProfile | null): InterviewSession {
   return {
     id: crypto.randomUUID(),
     role,
+    difficulty,
     resumeMode,
     resume,
     startedAt: new Date().toISOString(),
     turns: [],
     currentQuestion: null,
     interviewComplete: false,
-    demoMode,
     currentStage: "Applied",
     hiringOutcome: null,
     liveConfidence: 50,
@@ -379,38 +532,5 @@ export function applyTurnToSession(session: InterviewSession, turn: InterviewTur
     memory,
     hiringOutcome: interviewComplete ? deriveHiringOutcome(answerStrength) : session.hiringOutcome,
     interviewComplete
-  };
-}
-
-export function buildDemoTurn(role: JobRole, index: number, resume: ResumeProfile | null, memory: InterviewSession["memory"]) {
-  const transcript = buildDemoTranscript(role, index);
-  const speechMetrics = {
-    fillerCount: index === 1 ? 1 : 0,
-    fillerWords: index === 1 ? ["um"] : [],
-    speakingPace: 122 + index * 4
-  };
-  const faceMetrics = {
-    eyeContact: 78 + index,
-    headStability: 74 + index,
-    engagementScore: 76 + index
-  };
-  const evaluation = buildFallbackEvaluation({
-    role,
-    transcript,
-    speechMetrics,
-    faceMetrics,
-    resume,
-    strictness: memory.strictness,
-    previousWeakAreas: memory.weakAreas
-  });
-
-  return {
-    id: crypto.randomUUID(),
-    question: "",
-    transcript,
-    durationSeconds: 35 + index * 4,
-    speechMetrics,
-    faceMetrics,
-    evaluation
   };
 }

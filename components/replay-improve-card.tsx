@@ -1,5 +1,17 @@
 import { InterviewTurn } from "@/lib/interview-types";
 
+function toHighlightList(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map((item) => String(item).trim()).filter(Boolean);
+  }
+
+  if (typeof value === "string" && value.trim()) {
+    return [value.trim()];
+  }
+
+  return ["Add clearer structure, stronger evidence, and a more direct link to the role."];
+}
+
 export function ReplayImproveCard({ turn }: { turn: InterviewTurn | null }) {
   if (!turn) {
     return (
@@ -9,6 +21,8 @@ export function ReplayImproveCard({ turn }: { turn: InterviewTurn | null }) {
       </div>
     );
   }
+
+  const rewriteHighlights = toHighlightList(turn.evaluation.rewriteHighlights);
 
   return (
     <div className="panel p-6">
@@ -34,7 +48,7 @@ export function ReplayImproveCard({ turn }: { turn: InterviewTurn | null }) {
       <div className="mt-4">
         <p className="text-xs uppercase tracking-[0.18em] text-slate-500">What changed</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          {turn.evaluation.rewriteHighlights.map((item) => (
+          {rewriteHighlights.map((item) => (
             <span key={item} className="rounded-full bg-amber-100 px-3 py-2 text-sm text-amber-900">
               {item}
             </span>
