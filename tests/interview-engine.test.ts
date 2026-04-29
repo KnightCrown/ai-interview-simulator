@@ -10,8 +10,23 @@ import {
   normalizeFinalReport
 } from "@/lib/interview-engine";
 import { advanceHiringStage, liveConfidenceFromSignals } from "@/lib/interview-scoring";
-import { InterviewSession } from "@/lib/interview-types";
+import { FaceMetrics, InterviewSession } from "@/lib/interview-types";
 import { JOB_ROLES, SAMPLE_RESUME, getRoleExpectations } from "@/lib/sample-data";
+
+function sampleFace(overrides: Partial<FaceMetrics> = {}): FaceMetrics {
+  const base: FaceMetrics = {
+    eyeContact: 80,
+    headStability: 80,
+    engagementScore: 80,
+    emotion: { happy: 12, sad: 12, nervous: 12, dominant: "neutral" }
+  };
+
+  return {
+    ...base,
+    ...overrides,
+    emotion: overrides.emotion ?? base.emotion
+  };
+}
 
 describe("buildFallbackEvaluation", () => {
   it("surfaces aggressive missed-opportunity details when the transcript omits resume highlights", () => {
@@ -23,11 +38,10 @@ describe("buildFallbackEvaluation", () => {
         fillerWords: ["um"],
         speakingPace: 120
       },
-      faceMetrics: {
-        eyeContact: 80,
+      faceMetrics: sampleFace({
         headStability: 76,
         engagementScore: 78
-      },
+      }),
       resume: SAMPLE_RESUME,
       strictness: 60,
       previousWeakAreas: ["Specificity"]
@@ -69,7 +83,7 @@ describe("buildFallbackQuestion", () => {
           transcript: "First answer text here.",
           durationSeconds: 10,
           speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
-          faceMetrics: { eyeContact: 80, headStability: 80, engagementScore: 80 },
+          faceMetrics: sampleFace(),
           evaluation: {
             clarity: 70,
             relevance: 70,
@@ -94,7 +108,7 @@ describe("buildFallbackQuestion", () => {
           transcript: "Second answer about tradeoffs.",
           durationSeconds: 10,
           speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
-          faceMetrics: { eyeContact: 80, headStability: 80, engagementScore: 80 },
+          faceMetrics: sampleFace(),
           evaluation: {
             clarity: 70,
             relevance: 70,
@@ -132,7 +146,7 @@ describe("buildFallbackQuestion", () => {
           transcript: "First answer text here.",
           durationSeconds: 10,
           speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
-          faceMetrics: { eyeContact: 80, headStability: 80, engagementScore: 80 },
+          faceMetrics: sampleFace(),
           evaluation: {
             clarity: 70,
             relevance: 70,
@@ -157,7 +171,7 @@ describe("buildFallbackQuestion", () => {
           transcript: "Second answer about tradeoffs.",
           durationSeconds: 10,
           speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
-          faceMetrics: { eyeContact: 80, headStability: 80, engagementScore: 80 },
+          faceMetrics: sampleFace(),
           evaluation: {
             clarity: 70,
             relevance: 70,
@@ -235,11 +249,11 @@ describe("custom roles", () => {
         fillerWords: [],
         speakingPace: 130
       },
-      faceMetrics: {
+      faceMetrics: sampleFace({
         eyeContact: 82,
         headStability: 80,
         engagementScore: 84
-      },
+      }),
       resume: null
     });
 
@@ -258,11 +272,10 @@ describe("LLM response normalization", () => {
         fillerWords: [],
         speakingPace: 130
       },
-      faceMetrics: {
-        eyeContact: 80,
+      faceMetrics: sampleFace({
         headStability: 78,
         engagementScore: 82
-      },
+      }),
       resume: SAMPLE_RESUME
     });
 
@@ -309,11 +322,11 @@ describe("liveConfidenceFromSignals", () => {
         fillerWords: [],
         speakingPace: 128
       },
-      faceMetrics: {
+      faceMetrics: sampleFace({
         eyeContact: 86,
         headStability: 82,
         engagementScore: 84
-      }
+      })
     });
 
     expect(score).toBeGreaterThan(70);
@@ -356,7 +369,7 @@ describe("buildFallbackFinalReport", () => {
           transcript: "I built a dashboard in React and improved performance by 30 percent.",
           durationSeconds: 45,
           speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 118 },
-          faceMetrics: { eyeContact: 80, headStability: 78, engagementScore: 79 },
+          faceMetrics: sampleFace({ headStability: 78, engagementScore: 79 }),
           evaluation: {
             clarity: 82,
             relevance: 84,

@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import {
   AnswerEvaluation,
+  CandidateMoodSnapshot,
   FinalReport,
   HiringLikelihood,
   InterviewSession,
@@ -468,11 +469,13 @@ Full turn history (for extra continuity if needed): ${JSON.stringify(
     input.session.turns.map((turn) => ({
       question: turn.question,
       answer: turn.transcript,
+      candidateMood: turn.candidateMood ?? null,
       feedback: turn.evaluation.feedback,
       reaction: turn.evaluation.interviewerReaction,
       weakAreas: turn.evaluation.missingResumeHighlights
     }))
   )}
+Most recent completed answer apparent mood (use this like a real interviewer deciding tone and empathy): ${JSON.stringify(input.session.turns.at(-1)?.candidateMood ?? null)}
 Resume / CV context: ${JSON.stringify(input.session.resume)}
 `);
 
@@ -502,6 +505,7 @@ export async function evaluateAnswer(input: {
   transcript: string;
   speechMetrics: SpeechMetrics;
   faceMetrics: InterviewTurn["faceMetrics"];
+  candidateMood?: CandidateMoodSnapshot | null;
   resume: ResumeProfile | null;
   previousTurns: InterviewTurn[];
   memory: InterviewSession["memory"];
@@ -535,6 +539,8 @@ Previous turns: ${JSON.stringify(input.previousTurns)}
 Transcript: ${input.transcript}
 Speech metrics: ${JSON.stringify(input.speechMetrics)}
 Face metrics: ${JSON.stringify(input.faceMetrics)}
+Candidate apparent facial demeanor during this answer (aggregated over the answer window): ${JSON.stringify(input.candidateMood ?? null)}
+Interpret demeanor like a real interviewer: guarded, flat, sad-looking, or visibly tense delivery can reasonably affect perceived enthusiasm and confidence even when the words are decent—without inventing facts beyond this signal.
 Interview difficulty: ${input.difficulty}
 Role expectations: ${JSON.stringify(getRoleExpectations(input.role))}
 `);

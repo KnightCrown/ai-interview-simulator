@@ -1,22 +1,31 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { FaceMetrics } from "@/lib/interview-types";
+import type { FaceEmotionScores, FaceMetrics } from "@/lib/interview-types";
+import { pickDominantEmotion } from "@/lib/interview-scoring";
+
+const INITIAL_EMOTION: FaceEmotionScores = {
+  happy: 0,
+  sad: 0,
+  nervous: 0,
+  dominant: "neutral"
+};
 
 const INITIAL_METRICS: FaceMetrics = {
   eyeContact: 50,
   headStability: 50,
-  engagementScore: 50
+  engagementScore: 50,
+  emotion: INITIAL_EMOTION
 };
 
 type MediaPipeResults = {
-  multiFaceLandmarks?: Array<
-    Array<{
-      x: number;
-      y: number;
-      z: number;
-    }>
-  >;
+  multiFaceLandmarks?: Array<FaceLandmark[]>;
+};
+
+type FaceLandmark = {
+  x: number;
+  y: number;
+  z: number;
 };
 
 type FaceMeshInstance = {
@@ -26,8 +35,70 @@ type FaceMeshInstance = {
   close?: () => Promise<void> | void;
 };
 
+function clampLocal(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function eyeContactBorderColor(eyeContactRounded: number): string {
+  if (eyeContactRounded >= 70) {
+    return "#22c55e";
+  }
+
+  if (eyeContactRounded >= 40) {
+    return "#f97316";
+  }
+
+  return "#ef4444";
+}
+
+function syncCanvasToVideo(canvas: HTMLCanvasElement, video: HTMLVideoElement) {
+  const rect = video.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width));
+  const height = Math.max(1, Math.round(rect.height));
+
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+}
+
+function getBoundingBox(landmarks: FaceLandmark[], width: number, height: number, indices?: number[]) {
+  const points = indices ? indices.map((index) => landmarks[index]).filter(Boolean) : landmarks;
+
+  if (points.length === 0) {
+    return null;
+  }
+
+  const xs = points.map((point) => point.x * width);
+  const ys = points.map((point) => point.y * height);
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+
+  return {
+    x: minX,
+    y: minY,
+    width: maxX - minX,
+    height: maxY - minY
+  };
+}
+
+function strokeBoundingBox(ctx: CanvasRenderingContext2D, box: ReturnType<typeof getBoundingBox>, color: string, lineWidth: number) {
+  if (!box) {
+    return;
+  }
+
+  ctx.strokeStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.strokeRect(box.x, box.y, box.width, box.height);
+}
+
 export function useFaceTracking(preferredDeviceId?: string | null) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const blinkTimestampsRef = useRef<number[]>([]);
+  const prevEyeOpenRef = useRef<number | null>(null);
   const [metrics, setMetrics] = useState<FaceMetrics>(INITIAL_METRICS);
   const [isReady, setIsReady] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
@@ -39,6 +110,9 @@ export function useFaceTracking(preferredDeviceId?: string | null) {
     let animationFrameId: number | null = null;
     let mediaStream: MediaStream | null = null;
     let faceMesh: FaceMeshInstance | null = null;
+
+    blinkTimestampsRef.current = [];
+    prevEyeOpenRef.current = null;
 
     async function setup() {
       if (!videoRef.current) {
@@ -93,6 +167,15 @@ export function useFaceTracking(preferredDeviceId?: string | null) {
             return;
           }
 
+          const canvas = canvasRef.current;
+          const video = videoRef.current;
+          const ctx = canvas?.getContext("2d");
+
+          if (canvas && video && ctx) {
+            syncCanvasToVideo(canvas, video);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+          }
+
           const landmarks = results.multiFaceLandmarks?.[0];
           if (!landmarks) {
             setMetrics(INITIAL_METRICS);
@@ -105,14 +188,52 @@ export function useFaceTracking(preferredDeviceId?: string | null) {
           const chin = landmarks[152];
 
           const eyeAlignment = 100 - Math.min(100, Math.abs(leftEye.z - rightEye.z) * 1200);
-          const headStability = 100 - Math.min(100, Math.abs(nose.x - 0.5) * 180 + Math.abs(chin.y - 0.78) * 250);
-          const engagementScore = Math.round((eyeAlignment + headStability) / 2);
+          const headStabilityRaw = 100 - Math.min(100, Math.abs(nose.x - 0.5) * 180 + Math.abs(chin.y - 0.78) * 250);
+          const headStability = Math.round(headStabilityRaw);
+          const eyeContactRounded = Math.round(eyeAlignment);
+          const engagementScore = Math.round((eyeAlignment + headStabilityRaw) / 2);
+
+          const smileWidth = Math.abs(landmarks[61].x - landmarks[291].x);
+          const happy = clampLocal(Math.min(100, smileWidth * 500), 0, 100);
+
+          const mouthOpen = Math.abs(landmarks[13].y - landmarks[14].y);
+          const sad = clampLocal((0.022 - mouthOpen) * 2800, 0, 100);
+
+          const leftEyeOpen = Math.abs(landmarks[159].y - landmarks[145].y);
+          const rightEyeOpen = Math.abs(landmarks[386].y - landmarks[374].y);
+          const eyeOpenAvg = (leftEyeOpen + rightEyeOpen) / 2;
+
+          const now = performance.now();
+          if (prevEyeOpenRef.current !== null && prevEyeOpenRef.current > 0.024 && eyeOpenAvg < 0.014) {
+            blinkTimestampsRef.current.push(now);
+          }
+          prevEyeOpenRef.current = eyeOpenAvg;
+
+          blinkTimestampsRef.current = blinkTimestampsRef.current.filter((timestamp) => now - timestamp < 900);
+          const blinkBurstScore = Math.min(100, blinkTimestampsRef.current.length * 22);
+
+          const blinkFactor = eyeOpenAvg < 0.009 ? 1 : 0;
+          const nervous = clampLocal(blinkFactor * 55 + blinkBurstScore * 0.35 + (100 - headStabilityRaw) * 0.38, 0, 100);
+
+          const dominant = pickDominantEmotion(happy, sad, nervous);
+          const emotion: FaceEmotionScores = {
+            happy,
+            sad,
+            nervous,
+            dominant
+          };
 
           setMetrics({
-            eyeContact: Math.round(eyeAlignment),
-            headStability: Math.round(headStability),
-            engagementScore
+            eyeContact: eyeContactRounded,
+            headStability,
+            engagementScore,
+            emotion
           });
+
+          if (ctx && canvas) {
+            const faceBox = getBoundingBox(landmarks, canvas.width, canvas.height);
+            strokeBoundingBox(ctx, faceBox, eyeContactBorderColor(eyeContactRounded), 3);
+          }
         });
 
         const processFrame = async () => {
@@ -164,6 +285,15 @@ export function useFaceTracking(preferredDeviceId?: string | null) {
         videoRef.current.srcObject = null;
       }
 
+      const canvas = canvasRef.current;
+      const ctx = canvas?.getContext("2d");
+      if (canvas && ctx) {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+      }
+
+      blinkTimestampsRef.current = [];
+      prevEyeOpenRef.current = null;
+
       mediaStream?.getTracks().forEach((track) => track.stop());
       void faceMesh?.close?.();
     };
@@ -205,6 +335,7 @@ export function useFaceTracking(preferredDeviceId?: string | null) {
 
   return {
     videoRef,
+    canvasRef,
     metrics,
     isReady,
     permissionError,

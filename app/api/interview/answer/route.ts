@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { applyTurnToSession, evaluateAnswer, generateQuestion } from "@/lib/interview-engine";
-import { InterviewSession, InterviewTurn } from "@/lib/interview-types";
+import { CandidateMoodSnapshot, InterviewSession, InterviewTurn } from "@/lib/interview-types";
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
@@ -9,6 +9,7 @@ export async function POST(request: Request) {
     durationSeconds: number;
     speechMetrics: InterviewTurn["speechMetrics"];
     faceMetrics: InterviewTurn["faceMetrics"];
+    candidateMood?: CandidateMoodSnapshot | null;
   };
 
   const evaluation = await evaluateAnswer({
@@ -17,6 +18,7 @@ export async function POST(request: Request) {
     transcript: body.transcript,
     speechMetrics: body.speechMetrics,
     faceMetrics: body.faceMetrics,
+    candidateMood: body.candidateMood ?? null,
     resume: body.session.resume,
     previousTurns: body.session.turns,
     memory: body.session.memory
@@ -29,6 +31,7 @@ export async function POST(request: Request) {
     durationSeconds: body.durationSeconds,
     speechMetrics: body.speechMetrics,
     faceMetrics: body.faceMetrics,
+    candidateMood: body.candidateMood ?? undefined,
     evaluation
   };
 

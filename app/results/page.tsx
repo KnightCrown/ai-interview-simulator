@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FinalReport, FunnelOutcome } from "@/lib/interview-types";
@@ -213,6 +212,11 @@ export default function ResultsPage() {
     return null;
   }
 
+  const startNewSession = () => {
+    resetSession();
+    router.push("/");
+  };
+
   return (
     <main className="min-h-screen px-4 py-6 text-ink sm:px-6">
       <div className="mx-auto max-w-7xl rounded-3xl border border-slate-200/80 bg-white/85 p-5 shadow-panel backdrop-blur sm:p-6">
@@ -221,13 +225,13 @@ export default function ResultsPage() {
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-ink text-sm font-bold text-white">AI</div>
             <h1 className="text-2xl font-semibold">Interview Summary</h1>
           </div>
-          <Link
-            href="/"
-            onClick={resetSession}
+          <button
+            type="button"
+            onClick={startNewSession}
             className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-ink shadow-sm transition hover:border-teal-200 hover:text-teal-700"
           >
             Start a new session
-          </Link>
+          </button>
         </header>
 
         {isLoading || !report ? (
@@ -367,13 +371,13 @@ export default function ResultsPage() {
             <footer className="border-t border-slate-200 py-8 text-center">
               <p className="text-lg font-semibold text-ink">Keep practicing!</p>
               <p className="mt-2 text-sm text-slate-500">Review the feedback, refine your approach, and try again.</p>
-              <Link
-                href="/"
-                onClick={resetSession}
+              <button
+                type="button"
+                onClick={startNewSession}
                 className="mt-5 inline-flex rounded-2xl bg-teal-600 px-12 py-3 font-semibold text-white transition hover:bg-teal-700"
               >
                 Start a new session
-              </Link>
+              </button>
             </footer>
           </div>
         )}

@@ -3,19 +3,20 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { buildSafeResumePreview } from "@/lib/interview-scoring";
 import { loadMediaDevicePreferences, markMediaPermissionGranted, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
-import { JOB_ROLES, SAMPLE_RESUME } from "@/lib/sample-data";
 import { InterviewDifficulty, InterviewSession, ResumeMode } from "@/lib/interview-types";
 import { useInterviewSession } from "@/lib/session-store";
+
+const LANDING_JOB_ROLES = ["Software Developer", "Registered Nurse", "Financial Analyst", "Marketing Manager", "Other"];
 
 export default function LandingPage() {
   const router = useRouter();
   const { setSession } = useInterviewSession();
-  const [selectedRole, setSelectedRole] = useState("Software Engineer");
+  const [selectedRole, setSelectedRole] = useState("Software Developer");
   const [customRole, setCustomRole] = useState("");
   const [difficulty, setDifficulty] = useState<InterviewDifficulty>("Medium");
-  const [resumeMode, setResumeMode] = useState<ResumeMode>("Use Sample Resume");
+  const [resumeMode, setResumeMode] = useState<ResumeMode>("Skip Resume");
+  const [uploadedResumeName, setUploadedResumeName] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const [isCheckingMedia, setIsCheckingMedia] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -24,7 +25,6 @@ export default function LandingPage() {
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState("");
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState("");
-  const sampleResume = buildSafeResumePreview(SAMPLE_RESUME);
 
   const getNormalizedRole = () => {
     const role = selectedRole === "Other" ? customRole : selectedRole;
@@ -254,7 +254,7 @@ export default function LandingPage() {
                 }}
                 className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
               >
-                {JOB_ROLES.map((jobRole) => (
+                {LANDING_JOB_ROLES.map((jobRole) => (
                   <option key={jobRole} value={jobRole}>
                     {jobRole}
                   </option>
@@ -304,33 +304,50 @@ export default function LandingPage() {
 
             <fieldset className="space-y-3">
               <legend className="text-sm font-medium text-slate-700">Resume option</legend>
-              {(["Use Sample Resume", "Skip Resume"] as ResumeMode[]).map((option) => (
-                <label key={option} className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 px-4 py-4">
-                  <input
-                    checked={resumeMode === option}
-                    onChange={() => setResumeMode(option)}
-                    type="radio"
-                    name="resumeMode"
-                    className="mt-1"
-                  />
+              <label
+                className={`block cursor-pointer rounded-2xl border px-4 py-4 transition ${
+                  uploadedResumeName ? "border-teal-500 bg-teal-50" : "border-slate-200 bg-white hover:border-slate-300"
+                }`}
+              >
+                <input
+                  type="file"
+                  accept=".pdf,.doc,.docx,.txt"
+                  className="sr-only"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    setUploadedResumeName(file?.name ?? "");
+                    setResumeMode("Skip Resume");
+                    setStartError(null);
+                  }}
+                />
+                <span className="flex items-start justify-between gap-4">
                   <span>
-                    <span className="block font-medium text-ink">{option}</span>
+                    <span className="block font-medium text-ink">Upload resume</span>
                     <span className="mt-1 block text-sm text-slate-500">
-                      {option === "Use Sample Resume"
-                        ? "Use Alex Johnson's built-in resume to power aggressive resume-aware feedback."
-                        : "Run the interview without resume context."}
+                      {uploadedResumeName || "Add your own resume for a more personalized interview later."}
                     </span>
                   </span>
-                </label>
-              ))}
-            </fieldset>
+                  <span className="rounded-full bg-teal-100 px-3 py-1 text-xs font-semibold text-teal-700">Recommended</span>
+                </span>
+              </label>
 
-            <div className="rounded-3xl bg-slate-50 p-4 text-sm text-slate-600">
-              <p className="font-semibold text-ink">Sample resume preview</p>
-              <p className="mt-2">{sampleResume.name}</p>
-              <p>{sampleResume.role}</p>
-              <p className="mt-2">{sampleResume.skills.join(" / ")}</p>
-            </div>
+              <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 px-4 py-4">
+                <input
+                  checked={resumeMode === "Skip Resume" && !uploadedResumeName}
+                  onChange={() => {
+                    setUploadedResumeName("");
+                    setResumeMode("Skip Resume");
+                  }}
+                  type="radio"
+                  name="resumeMode"
+                  className="mt-1"
+                />
+                <span>
+                  <span className="block font-medium text-ink">Skip resume</span>
+                  <span className="mt-1 block text-sm text-slate-500">Run the interview without resume context.</span>
+                </span>
+              </label>
+            </fieldset>
 
             {startError ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-900">{startError}</p> : null}
 
@@ -343,9 +360,6 @@ export default function LandingPage() {
             </button>
           </form>
 
-          <p className="mt-4 text-xs text-slate-500">
-            Live OpenAI responses run through the server using <code>OPENAI_API_KEY</code> from local environment configuration.
-          </p>
         </div>
       </section>
 

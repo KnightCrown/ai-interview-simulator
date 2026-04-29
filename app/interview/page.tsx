@@ -5,8 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackPanel, type CoachingThought } from "@/components/feedback-panel";
 import { InterviewerAvatar } from "@/components/interviewer-avatar";
 import { TypingQuestion } from "@/components/typing-question";
-import { AnswerEvaluation, InterviewSession, InterviewTurn } from "@/lib/interview-types";
-import { liveConfidenceFromSignals } from "@/lib/interview-scoring";
+import { AnswerEvaluation, CandidateMoodSnapshot, InterviewSession, InterviewTurn } from "@/lib/interview-types";
+import { liveConfidenceFromSignals, pickDominantEmotion } from "@/lib/interview-scoring";
 import { useFaceTracking } from "@/hooks/useFaceTracking";
 import { useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
@@ -78,6 +78,7 @@ export default function InterviewPage() {
     transcript
   } = speech;
   const { speak, stop, mouthLevel, emotion, isSpeaking } = interviewerSpeech;
+  const [displayedAvatarEmotion, setDisplayedAvatarEmotion] = useState(emotion);
   const [latestEvaluation, setLatestEvaluation] = useState<AnswerEvaluation | null>(null);
   const [coachingThoughts, setCoachingThoughts] = useState<CoachingThought[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -95,6 +96,9 @@ export default function InterviewPage() {
   const autoSubmittedRef = useRef(false);
   const submitAnswerRef = useRef<(() => void) | null>(null);
   const answerSubmissionChainRef = useRef<Promise<InterviewSession | null>>(Promise.resolve(null));
+  const answerEmotionAccumRef = useRef({ happy: 0, sad: 0, nervous: 0, frames: 0 });
+  const latestAvatarEmotionRef = useRef(emotion);
+  const prevShowTranscriptRef = useRef(false);
 
   useEffect(() => {
     if (!session) {
@@ -114,6 +118,39 @@ export default function InterviewPage() {
       setCameraMenuOpen(false);
     }
   }, [mainVideo]);
+
+  useEffect(() => {
+    latestAvatarEmotionRef.current = emotion;
+  }, [emotion]);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setDisplayedAvatarEmotion(latestAvatarEmotionRef.current);
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (showTranscript && !prevShowTranscriptRef.current) {
+      answerEmotionAccumRef.current = { happy: 0, sad: 0, nervous: 0, frames: 0 };
+    }
+    prevShowTranscriptRef.current = showTranscript;
+  }, [showTranscript]);
+
+  useEffect(() => {
+    if (!showTranscript) {
+      return;
+    }
+
+    const emotion = face.metrics.emotion;
+    answerEmotionAccumRef.current.happy += emotion.happy;
+    answerEmotionAccumRef.current.sad += emotion.sad;
+    answerEmotionAccumRef.current.nervous += emotion.nervous;
+    answerEmotionAccumRef.current.frames += 1;
+  }, [face.metrics, showTranscript]);
 
   const currentTranscript = `${transcript} ${interimTranscript}`.trim();
   const visibleTranscript = showTranscript ? currentTranscript : "";
@@ -160,6 +197,7 @@ export default function InterviewPage() {
       durationSeconds: number;
       speechMetrics: InterviewTurn["speechMetrics"];
       faceMetrics: InterviewTurn["faceMetrics"];
+      candidateMood: CandidateMoodSnapshot;
       questionBeingAnswered: string | null;
       questionQueueForSubmission: string[];
       optimisticSession: InterviewSession | null;
@@ -184,7 +222,8 @@ export default function InterviewPage() {
             transcript: input.transcriptForEvaluation,
             durationSeconds: input.durationSeconds,
             speechMetrics: input.speechMetrics,
-            faceMetrics: input.faceMetrics
+            faceMetrics: input.faceMetrics,
+            candidateMood: input.candidateMood
           })
         });
 
@@ -253,6 +292,20 @@ export default function InterviewPage() {
     const transcriptForEvaluation = visibleTranscript.trim();
     const isFinalQuestion = currentQuestionNumber >= TOTAL_QUESTIONS;
 
+    const accum = answerEmotionAccumRef.current;
+    const frameCount = Math.max(1, accum.frames);
+    const averages = {
+      happy: accum.happy / frameCount,
+      sad: accum.sad / frameCount,
+      nervous: accum.nervous / frameCount
+    };
+    const moodDominant = pickDominantEmotion(averages.happy, averages.sad, averages.nervous);
+    const candidateMood: CandidateMoodSnapshot = {
+      dominant: moodDominant,
+      averages,
+      framesSampled: accum.frames
+    };
+
     setIsSubmitting(true);
     setSubmitError(null);
     setCaptureEnabled(false);
@@ -273,6 +326,7 @@ export default function InterviewPage() {
       durationSeconds: answerDurationSeconds,
       speechMetrics,
       faceMetrics: face.metrics,
+      candidateMood,
       questionBeingAnswered: session.currentQuestion,
       questionQueueForSubmission: [],
       optimisticSession: null,
@@ -442,6 +496,9 @@ export default function InterviewPage() {
               </div>
             </div>
             <p className="mt-7 text-sm text-slate-500">Eye Contact: {face.metrics.eyeContact}</p>
+            <p className="mt-2 text-sm font-medium text-slate-600 capitalize" aria-live="polite">
+              {face.metrics.emotion.dominant}
+            </p>
           </div>
 
           <div className="mt-10 space-y-8 border-t border-slate-200 pt-8">
@@ -475,25 +532,34 @@ export default function InterviewPage() {
               <InterviewerAvatar
                 className="h-full w-full rounded-2xl border-0 shadow-none"
                 mouthLevel={mouthLevel}
-                emotion={emotion}
+                emotion={displayedAvatarEmotion}
                 isSpeaking={isSpeaking}
                 title="AI interviewer"
                 showLabels={false}
               />
             ) : null}
 
-            <video
-              ref={face.videoRef}
-              autoPlay
-              muted
-              playsInline
+            <div
               onClick={() => setMainVideo(mainVideo === "candidate" ? "interviewer" : "candidate")}
               className={
                 mainVideo === "candidate"
-                  ? "h-full w-full cursor-pointer object-cover"
-                  : "absolute bottom-4 right-4 z-10 h-[34%] w-[28%] min-w-40 cursor-pointer rounded-xl border border-white/20 object-cover shadow-2xl"
+                  ? "relative h-full w-full cursor-pointer overflow-hidden"
+                  : "absolute bottom-4 right-4 z-10 h-[34%] w-[28%] min-w-40 cursor-pointer overflow-hidden rounded-xl border border-white/20 shadow-2xl"
               }
-            />
+            >
+              <video
+                ref={face.videoRef}
+                autoPlay
+                muted
+                playsInline
+                className="h-full w-full object-cover"
+              />
+              <canvas
+                ref={face.canvasRef}
+                className="pointer-events-none absolute inset-0 h-full w-full"
+                aria-hidden="true"
+              />
+            </div>
 
             {mainVideo === "candidate" ? (
               <div className="absolute bottom-4 right-4 h-[34%] w-[28%] min-w-40">
@@ -501,7 +567,7 @@ export default function InterviewPage() {
                   compact
                   className="h-full w-full rounded-xl border border-white/20 shadow-2xl"
                   mouthLevel={mouthLevel}
-                  emotion={emotion}
+                  emotion={displayedAvatarEmotion}
                   isSpeaking={isSpeaking}
                   onClick={() => setMainVideo("interviewer")}
                   title="AI interviewer"

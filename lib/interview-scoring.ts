@@ -1,5 +1,7 @@
 import {
   AnswerEvaluation,
+  FaceEmotionDominant,
+  FaceEmotionScores,
   FaceMetrics,
   FunnelOutcome,
   HiringStage,
@@ -55,6 +57,44 @@ export function speakingPaceStabilityScore(speakingPace: number) {
   return 40;
 }
 
+export function pickDominantEmotion(happy: number, sad: number, nervous: number): FaceEmotionDominant {
+  if (happy > sad && happy > nervous && happy > 18) {
+    return "happy";
+  }
+
+  if (sad > nervous && sad > 18) {
+    return "sad";
+  }
+
+  if (nervous > 40) {
+    return "nervous";
+  }
+
+  return "neutral";
+}
+
+export function emotionConfidenceAdjustment(emotion: FaceEmotionScores): number {
+  const { dominant, happy, sad, nervous } = emotion;
+
+  if (dominant === "neutral") {
+    return 0;
+  }
+
+  if (dominant === "happy") {
+    return clampScore(Math.round(5 + happy * 0.06), -25, 25);
+  }
+
+  if (dominant === "sad") {
+    return -clampScore(Math.round(6 + sad * 0.08), 0, 22);
+  }
+
+  if (dominant === "nervous") {
+    return -clampScore(Math.round(5 + nervous * 0.06), 0, 22);
+  }
+
+  return 0;
+}
+
 export function liveConfidenceFromSignals(input: {
   role: JobRole;
   transcript: string;
@@ -68,13 +108,15 @@ export function liveConfidenceFromSignals(input: {
   const fillerPenalty = Math.min(28, speechMetrics.fillerCount * 4);
   const eyeContact = faceMetrics.eyeContact;
 
-  return clampScore((pace * 0.18 + (100 - fillerPenalty) * 0.16 + eyeContact * 0.22 + structure * 0.2 + relevance * 0.24));
+  const base = clampScore((pace * 0.18 + (100 - fillerPenalty) * 0.16 + eyeContact * 0.22 + structure * 0.2 + relevance * 0.24));
+
+  return clampScore(base + emotionConfidenceAdjustment(faceMetrics.emotion));
 }
 
 export function confidenceFromMetrics(speechMetrics: SpeechMetrics, faceMetrics: FaceMetrics) {
   const fillerPenalty = Math.min(25, speechMetrics.fillerCount * 4);
   const paceBonus = speechMetrics.speakingPace >= 95 && speechMetrics.speakingPace <= 170 ? 10 : 0;
-  return clampScore(faceMetrics.engagementScore - fillerPenalty + paceBonus);
+  return clampScore(faceMetrics.engagementScore - fillerPenalty + paceBonus + emotionConfidenceAdjustment(faceMetrics.emotion));
 }
 
 export function inferMissingHighlights(transcript: string, resume: ResumeProfile | null) {

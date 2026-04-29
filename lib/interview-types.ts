@@ -12,10 +12,31 @@ export interface ResumeProfile {
   experience: string[];
 }
 
+export type FaceEmotionDominant = "happy" | "sad" | "nervous" | "neutral";
+
+export interface FaceEmotionScores {
+  happy: number;
+  sad: number;
+  nervous: number;
+  dominant: FaceEmotionDominant;
+}
+
 export interface FaceMetrics {
   eyeContact: number;
   headStability: number;
   engagementScore: number;
+  emotion: FaceEmotionScores;
+}
+
+/** Aggregated apparent mood during a single answer window (client-side). */
+export interface CandidateMoodSnapshot {
+  dominant: FaceEmotionDominant;
+  averages: {
+    happy: number;
+    sad: number;
+    nervous: number;
+  };
+  framesSampled: number;
 }
 
 export interface SpeechMetrics {
@@ -56,6 +77,7 @@ export interface InterviewTurn {
   durationSeconds: number;
   speechMetrics: SpeechMetrics;
   faceMetrics: FaceMetrics;
+  candidateMood?: CandidateMoodSnapshot;
   evaluation: AnswerEvaluation;
 }
 
