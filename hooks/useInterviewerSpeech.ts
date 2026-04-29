@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AvatarEmotion, deriveAvatarEmotion, supportsWebGl } from "@/lib/avatar-utils";
+import { AvatarEmotion, deriveAvatarEmotion, estimateSpeechDurationMs, supportsWebGl } from "@/lib/avatar-utils";
+
+// Hard cap on total time we will wait for a single utterance before giving up,
+// in case the browser leaves `speechSynthesis.speaking` stuck on `true`.
+const ABSOLUTE_MAX_SPEECH_MS = 90_000;
+// When the fallback fires but the browser is still speaking, recheck after this delay.
+const FALLBACK_RECHECK_MS = 1500;
 
 function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
@@ -165,7 +171,9 @@ export function useInterviewerSpeech() {
       return new Promise<void>((resolve) => {
         let hasResolved = false;
         let fallbackTimer: number | null = null;
-        const estimatedDuration = Math.min(14000, Math.max(2600, cleanText.split(/\s+/).length * 420));
+        const startTimestamp = Date.now();
+        const estimatedDuration = estimateSpeechDurationMs(cleanText);
+
         const finish = () => {
           if (hasResolved) {
             return;
@@ -174,11 +182,36 @@ export function useInterviewerSpeech() {
           hasResolved = true;
           if (fallbackTimer !== null) {
             window.clearTimeout(fallbackTimer);
+            fallbackTimer = null;
           }
           stop();
           resolve();
         };
-        fallbackTimer = window.setTimeout(finish, estimatedDuration);
+
+        const scheduleFallback = (delay: number) => {
+          if (fallbackTimer !== null) {
+            window.clearTimeout(fallbackTimer);
+          }
+          fallbackTimer = window.setTimeout(() => {
+            // If the browser is still actively speaking, do NOT cancel; just
+            // recheck shortly. This prevents the question from being cut off
+            // when the actual TTS playback runs longer than our estimate.
+            const stillSpeaking =
+              typeof window !== "undefined" &&
+              "speechSynthesis" in window &&
+              window.speechSynthesis.speaking;
+            const elapsed = Date.now() - startTimestamp;
+
+            if (stillSpeaking && elapsed < ABSOLUTE_MAX_SPEECH_MS) {
+              scheduleFallback(FALLBACK_RECHECK_MS);
+              return;
+            }
+
+            finish();
+          }, delay);
+        };
+
+        scheduleFallback(estimatedDuration);
 
         utterance.onstart = () => {
           setIsSpeaking(true);

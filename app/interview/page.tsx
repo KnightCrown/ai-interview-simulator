@@ -111,12 +111,21 @@ export default function InterviewPage() {
   }, [face.metrics, session, speechMetrics, visibleTranscript]);
 
   useEffect(() => {
-    if (!session || !speechIsSupported || speechIsListening) {
+    if (!session || !speechIsSupported) {
       return;
     }
 
-    startListening({ reset: false });
-  }, [session, speechIsListening, speechIsSupported, startListening]);
+    if (showTranscript) {
+      if (!speechIsListening) {
+        startListening({ reset: true });
+      }
+      return;
+    }
+
+    if (speechIsListening) {
+      stopListening();
+    }
+  }, [session, showTranscript, speechIsListening, speechIsSupported, startListening, stopListening]);
 
   const submitAnswer = useCallback(async () => {
     if (!session || isSubmitting) {
@@ -184,6 +193,7 @@ export default function InterviewPage() {
     const question = session.currentQuestion;
     lastSpokenQuestionRef.current = question;
     autoSubmittedRef.current = false;
+    stopListening();
     setCaptureEnabled(false);
     setShowTranscript(false);
     setAnswerSecondsRemaining(ANSWER_SECONDS);
@@ -205,7 +215,7 @@ export default function InterviewPage() {
       setCaptureEnabled(true);
       setShowTranscript(true);
     })();
-  }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, stop]);
+  }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, stop, stopListening]);
 
   useEffect(() => {
     if (!showTranscript || isSubmitting || session?.interviewComplete) {
