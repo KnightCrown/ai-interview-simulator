@@ -79,6 +79,7 @@ export default function InterviewPage() {
   const [showTranscript, setShowTranscript] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [mainVideo, setMainVideo] = useState<MainVideo>("interviewer");
+  const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
   const [answerSecondsRemaining, setAnswerSecondsRemaining] = useState(ANSWER_SECONDS);
   const lastSpokenQuestionRef = useRef<string | null>(null);
   const autoSubmittedRef = useRef(false);
@@ -90,8 +91,15 @@ export default function InterviewPage() {
     }
   }, [router, session]);
 
+  useEffect(() => {
+    if (mainVideo !== "candidate") {
+      setCameraMenuOpen(false);
+    }
+  }, [mainVideo]);
+
   const currentTranscript = `${transcript} ${interimTranscript}`.trim();
   const visibleTranscript = showTranscript ? currentTranscript : "";
+  const transcriptPlaceholder = showTranscript ? "Your text will appear here." : "Answer timer starts when the interviewer finishes speaking.";
   const repeatedFillerWords = getRepeatedFillerWords(currentTranscript, speechMetrics.fillerWords);
   const speakingPaceLabel = getSpeakingPaceLabel(speechMetrics.speakingPace);
   const currentQuestionNumber = session ? Math.min(session.turns.length + 1, TOTAL_QUESTIONS) : 1;
@@ -359,8 +367,12 @@ export default function InterviewPage() {
               autoPlay
               muted
               playsInline
-              onClick={() => setMainVideo("interviewer")}
-              className={mainVideo === "candidate" ? "h-full w-full cursor-pointer object-cover" : "sr-only"}
+              onClick={() => setMainVideo(mainVideo === "candidate" ? "interviewer" : "candidate")}
+              className={
+                mainVideo === "candidate"
+                  ? "h-full w-full cursor-pointer object-cover"
+                  : "absolute bottom-4 right-4 z-10 h-[34%] w-[28%] min-w-40 cursor-pointer rounded-xl border border-white/20 object-cover shadow-2xl"
+              }
             />
 
             {mainVideo === "candidate" ? (
@@ -378,37 +390,53 @@ export default function InterviewPage() {
               </div>
             ) : null}
 
-            {mainVideo === "interviewer" ? (
-              <button
-                type="button"
-                onClick={() => setMainVideo("candidate")}
-                className="absolute bottom-4 right-4 grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
-                aria-label="Show candidate camera"
-              >
-                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M4 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                  <path d="m17 10 5-3v10l-5-3" />
-                </svg>
-              </button>
-            ) : null}
-
             {mainVideo === "candidate" ? (
-              <button
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void face.cycleCamera();
-                }}
-                className="absolute right-4 top-4 grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
-                aria-label="Switch camera device"
-              >
-                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 12a9 9 0 0 1-15.5 6.2" />
-                  <path d="M3 12A9 9 0 0 1 18.5 5.8" />
-                  <path d="M18 3v4h-4" />
-                  <path d="M6 21v-4h4" />
-                </svg>
-              </button>
+              <div className="absolute right-4 top-4">
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setCameraMenuOpen((current) => !current);
+                  }}
+                  className="grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+                  aria-expanded={cameraMenuOpen}
+                  aria-label="Choose camera device"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M4 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                    <path d="m17 10 5-3v10l-5-3" />
+                    <path d="M7 12h6" />
+                    <path d="M10 9v6" />
+                  </svg>
+                </button>
+
+                {cameraMenuOpen ? (
+                  <div
+                    className="mt-2 w-64 overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur"
+                    onClick={(event) => event.stopPropagation()}
+                  >
+                    {face.videoDevices.length > 0 ? (
+                      face.videoDevices.map((device, index) => (
+                        <button
+                          key={device.deviceId || index}
+                          type="button"
+                          onClick={() => {
+                            void face.selectCamera(index);
+                            setCameraMenuOpen(false);
+                          }}
+                          className={`block w-full rounded-lg px-3 py-2 text-left transition hover:bg-white/15 ${
+                            index === face.selectedDeviceIndex ? "bg-white/20 font-semibold" : ""
+                          }`}
+                        >
+                          {device.label || `Camera ${index + 1}`}
+                        </button>
+                      ))
+                    ) : (
+                      <p className="px-3 py-2 text-slate-300">No camera devices found</p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
 
             <div className="absolute bottom-5 left-5 rounded-xl bg-black/55 px-4 py-2 text-sm font-semibold text-white backdrop-blur">
@@ -418,43 +446,37 @@ export default function InterviewPage() {
           </div>
 
           <div className="mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-panel">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Interviewer question</p>
-                <p className="mt-4 text-xl font-bold leading-snug text-ink sm:text-2xl">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Interviewer question</p>
+              <div className="mt-3 flex items-start justify-between gap-5">
+                <p className="text-justify text-[1.1rem] font-medium leading-[1.45rem] text-ink">
                   <TypingQuestion text={session.currentQuestion} />
                 </p>
+                {showTranscript ? (
+                  <p className="shrink-0 whitespace-nowrap text-[1.1rem] font-medium leading-[1.45rem] text-ink">
+                    {formatTime(answerSecondsRemaining)}
+                  </p>
+                ) : null}
               </div>
-
-              {showTranscript ? (
-                <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
-                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Time left</p>
-                  <p className="mt-1 text-2xl font-semibold">{formatTime(answerSecondsRemaining)}</p>
-                </div>
-              ) : null}
             </div>
 
-            {showTranscript ? (
-              <div className="mt-6 border-t border-slate-200 pt-5">
-                <p className="min-h-20 whitespace-pre-wrap text-sm leading-7 text-slate-700">
-                  {visibleTranscript || "Your answer will appear here in real time."}
-                </p>
-              </div>
-            ) : null}
+            <div className="mt-6 border-t border-slate-200 pt-5">
+              <p className="min-h-20 whitespace-pre-wrap text-sm leading-7 text-slate-700">
+                {visibleTranscript || transcriptPlaceholder}
+              </p>
+            </div>
 
-            <div className="mt-6 flex flex-col items-center border-t border-slate-200 pt-5">
+            <div className="mt-4 flex flex-col items-end">
+              {submitError ? <p className="mb-3 text-sm font-medium text-red-600">{submitError}</p> : null}
               <button
                 type="button"
                 onClick={() => void submitAnswer()}
                 disabled={!showTranscript || isSubmitting}
-                className="min-h-12 w-full max-w-xs rounded-xl bg-teal-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                className="min-h-11 w-full max-w-[11rem] rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300"
               >
                 {isSubmitting ? "Evaluating..." : "Submit early"}
               </button>
-              <p className="mt-3 text-sm text-slate-500">
-                {speechIsSupported ? "Answer timer starts when the interviewer finishes speaking." : "Speech recognition is not supported in this browser."}
-              </p>
-              {submitError ? <p className="mt-3 text-sm font-medium text-red-600">{submitError}</p> : null}
+              {!speechIsSupported ? <p className="mt-3 text-sm text-slate-500">Speech recognition is not supported in this browser.</p> : null}
             </div>
           </div>
         </section>

@@ -161,14 +161,22 @@ export function useFaceTracking() {
     };
   }, [selectedDeviceIndex]);
 
+  const refreshVideoDevices = async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      return videoDevices;
+    }
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter((device) => device.kind === "videoinput");
+    setVideoDevices(cameras);
+
+    return cameras;
+  };
+
   const cycleCamera = async () => {
     let cameras = videoDevices;
 
-    if (navigator.mediaDevices?.enumerateDevices) {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      cameras = devices.filter((device) => device.kind === "videoinput");
-      setVideoDevices(cameras);
-    }
+    cameras = await refreshVideoDevices();
 
     if (cameras.length <= 1) {
       return;
@@ -177,13 +185,25 @@ export function useFaceTracking() {
     setSelectedDeviceIndex((current) => (current + 1) % cameras.length);
   };
 
+  const selectCamera = async (index: number) => {
+    const cameras = await refreshVideoDevices();
+
+    if (cameras.length === 0) {
+      return;
+    }
+
+    setSelectedDeviceIndex(Math.max(0, Math.min(index, cameras.length - 1)));
+  };
+
   return {
     videoRef,
     metrics,
     isReady,
     permissionError,
     videoDevices,
+    selectedDeviceIndex,
     selectedDevice: videoDevices[selectedDeviceIndex % Math.max(videoDevices.length, 1)] ?? null,
-    cycleCamera
+    cycleCamera,
+    selectCamera
   };
 }
