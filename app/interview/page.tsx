@@ -20,8 +20,35 @@ function formatTime(seconds: number) {
   return `${minutes.toString().padStart(2, "0")}:${remainingSeconds.toString().padStart(2, "0")}`;
 }
 
-function countWords(text: string) {
-  return text.trim().split(/\s+/).filter(Boolean).length;
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getRepeatedFillerWords(transcript: string, fillerWords: string[]) {
+  const normalizedTranscript = transcript.toLowerCase();
+
+  return fillerWords
+    .map((word) => {
+      const matches = normalizedTranscript.match(new RegExp(`\\b${escapeRegExp(word.toLowerCase())}\\b`, "g"));
+
+      return {
+        word,
+        count: matches?.length ?? 0
+      };
+    })
+    .filter((item) => item.count > 5);
+}
+
+function getSpeakingPaceLabel(wordsPerMinute: number) {
+  if (wordsPerMinute > 155) {
+    return "Speak slower, please";
+  }
+
+  if (wordsPerMinute < 105) {
+    return "Too slow";
+  }
+
+  return "Ideal";
 }
 
 export default function InterviewPage() {
@@ -45,7 +72,8 @@ export default function InterviewPage() {
   }, [router, session]);
 
   const currentTranscript = `${speech.transcript} ${speech.interimTranscript}`.trim();
-  const spokenWords = countWords(currentTranscript);
+  const repeatedFillerWords = getRepeatedFillerWords(currentTranscript, speech.metrics.fillerWords);
+  const speakingPaceLabel = getSpeakingPaceLabel(speech.metrics.speakingPace);
   const currentQuestionNumber = session ? Math.min(session.turns.length + 1, TOTAL_QUESTIONS) : 1;
 
   const liveConfidence = useMemo(() => {
@@ -160,7 +188,6 @@ export default function InterviewPage() {
   };
 
   const primaryLabel = speech.isListening ? "Stop Answer" : speech.transcript.trim() ? "Submit Answer" : "Start Answer";
-  const silenceSeconds = speech.isListening && spokenWords === 0 ? speech.elapsedSeconds : 0;
 
   return (
     <main className="min-h-screen bg-[#f7f9fc] text-ink">
@@ -222,13 +249,14 @@ export default function InterviewPage() {
                 <p className="mt-2 text-sm font-semibold text-teal-600">{liveConfidence >= 70 ? "Strong" : liveConfidence >= 55 ? "Good" : "Warming up"}</p>
               </div>
             </div>
+            <p className="mt-7 text-sm text-slate-500">Eye Contact: {face.metrics.eyeContact}</p>
           </div>
 
           <div className="mt-10 space-y-8 border-t border-slate-200 pt-8">
             <div>
-              <p className="text-sm font-semibold">Words spoken</p>
-              <p className="mt-4 text-3xl font-semibold">{spokenWords}</p>
-              <p className="mt-1 text-sm text-slate-500">words</p>
+              <p className="text-sm font-semibold">Words per Min</p>
+              <p className="mt-4 text-3xl font-semibold">{speech.metrics.speakingPace}</p>
+              <p className="mt-1 text-sm text-slate-500">{speakingPaceLabel}</p>
             </div>
 
             <div className="border-t border-slate-200 pt-8">
@@ -238,9 +266,13 @@ export default function InterviewPage() {
             </div>
 
             <div className="border-t border-slate-200 pt-8">
-              <p className="text-sm font-semibold">Silence</p>
-              <p className="mt-4 text-3xl font-semibold">{silenceSeconds}s</p>
-              <p className="mt-1 text-sm text-slate-500">last 30s</p>
+              <p className="text-sm font-semibold">Filler Words</p>
+              <p className="mt-4 text-3xl font-semibold">{speech.metrics.fillerCount}</p>
+              {repeatedFillerWords.length > 0 ? (
+                <p className="mt-1 text-sm text-slate-500">
+                  {repeatedFillerWords.map((item) => `${item.word} (${item.count})`).join(", ")}
+                </p>
+              ) : null}
             </div>
           </div>
         </aside>
