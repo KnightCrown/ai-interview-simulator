@@ -38,24 +38,27 @@ function buildInterviewerReaction(input: {
   const { role, liveConfidence, previousWeakAreas, strictness } = input;
 
   if (liveConfidence >= 80) {
-    return `That's interesting. You're sounding strong for this ${role} interview, so let's go deeper.`;
+    return `I'm hearing real strength for this ${role} interview. I trust the direction, and now I want to pressure-test the depth behind it.`;
   }
 
   if (strictness >= 70 || previousWeakAreas.length > 0) {
-    return `Can you be more specific? Earlier I was still looking for stronger evidence around ${previousWeakAreas[0] ?? "depth"}.`;
+    return `I'm still concerned about ${(previousWeakAreas[0] ?? "depth").toLowerCase()}. I need stronger evidence before I would feel confident moving this forward.`;
   }
 
   if (liveConfidence <= 50) {
-    return "You're on the right track, but slow down and give me one concrete example with impact.";
+    return "I'm concerned the answer is still too broad. I need one concrete example with clearer ownership and impact.";
   }
 
-  return "That's good, but I want to go deeper on how you personally drove the outcome.";
+  return "I'm interested, but I'm still looking for clearer personal ownership and a sharper link between the work and the outcome.";
 }
 
-export function buildFallbackQuestion(session: InterviewSession) {
+export function buildFallbackQuestion(
+  session: InterviewSession,
+  options: { targetTurnIndex?: number; pendingAnswer?: string | null } = {}
+) {
   const { role, turns, memory, difficulty } = session;
-  const stage = turns.length;
-  const previousAnswer = turns.at(-1)?.transcript ?? "";
+  const stage = options.targetTurnIndex ?? turns.length;
+  const previousAnswer = options.pendingAnswer?.trim() || turns.at(-1)?.transcript || "";
   const previousWeakArea = memory.weakAreas[0];
   const roleSignals = getRoleExpectations(role).join(", ");
   const difficultyDirections = {
@@ -379,14 +382,28 @@ export function normalizeFinalReport(parsed: Partial<FinalReport>, fallback: Fin
   };
 }
 
-export async function generateQuestion(input: { session: InterviewSession }) {
-  const fallback = buildFallbackQuestion(input.session);
+export async function generateQuestion(input: {
+  session: InterviewSession;
+  targetTurnIndex?: number;
+  pendingAnswer?: string | null;
+}) {
+  const targetTurnIndex = input.targetTurnIndex ?? input.session.turns.length;
+  const fallback = buildFallbackQuestion(input.session, {
+    targetTurnIndex,
+    pendingAnswer: input.pendingAnswer
+  });
   const roleExpectations = getRoleExpectations(input.session.role);
+  const preparedQuestions = [input.session.currentQuestion, ...(input.session.questionQueue ?? [])].filter(Boolean);
   const openAiResponse = await generateWithOpenAI(`
 You are an interviewer running a realistic ${input.session.role} interview at ${input.session.difficulty} difficulty.
 Behave like a real person with memory, light personality, and evolving strictness.
-Generate exactly one concise interview question.
+Generate exactly one concise interview question for question ${targetTurnIndex + 1} of ${TURN_LIMIT}.
 Reference previous answers when helpful.
+Avoid repeating any prepared or already-asked question.
+Conversation continuity rules:
+- Question 1 may open naturally.
+- For question 2 or later, do not greet the candidate, reintroduce yourself, say "great/nice to meet you", say "thanks", or use an opener like "for this next question".
+- If no answer exists yet because the question was pre-generated, ask a clean standalone follow-up without pretending the candidate said something.
 Role research behavior:
 - If the role is not a common preset, silently infer signals from 2-3 representative job descriptions for "${input.session.role}".
 - Use likely responsibilities, tools, seniority expectations, success metrics, and common interview loops for that job.
@@ -407,10 +424,41 @@ Previous turns: ${JSON.stringify(
       weakAreas: turn.evaluation.missingResumeHighlights
     }))
   )}
+Prepared questions to avoid: ${JSON.stringify(preparedQuestions)}
+Most recent raw answer not yet reflected in feedback: ${input.pendingAnswer?.trim() || "None"}
 Resume context: ${JSON.stringify(input.session.resume)}
 `);
 
   return openAiResponse?.trim() || fallback;
+}
+
+export async function generateInitialQuestions(session: InterviewSession) {
+  const [firstQuestion, secondQuestion] = await Promise.all([
+    generateQuestion({ session, targetTurnIndex: 0 }),
+    generateQuestion({ session, targetTurnIndex: 1 })
+  ]);
+
+  return [
+    firstQuestion,
+    secondQuestion === firstQuestion ? buildFallbackQuestion(session, { targetTurnIndex: 1 }) : secondQuestion
+  ];
+}
+
+export function getNextQueuedQuestionTargetIndex(session: InterviewSession) {
+  return session.turns.length + 1 + (session.questionQueue ?? []).length;
+}
+
+export function appendQueuedQuestion(session: InterviewSession, question: string) {
+  const questionQueue = session.questionQueue ?? [];
+
+  if (!question.trim() || questionQueue.includes(question) || session.currentQuestion === question) {
+    return session;
+  }
+
+  return {
+    ...session,
+    questionQueue: [...questionQueue, question]
+  };
 }
 
 export async function evaluateAnswer(input: {
@@ -438,6 +486,9 @@ clarity, relevance, structure, confidence, engagement, liveConfidence, feedback,
 
 Return only a JSON object. Do not wrap it in markdown.
 Be specific and slightly more realistic than a tutoring app.
+Write interviewerReaction as the interviewer's first-person internal monologue. Use language like "I'm concerned...", "I'm looking for...", or "I trust...".
+Do not write detached phrases like "the interviewer likely", "the interviewer might", or "the interviewer would".
+Keep interviewerReaction to 1-3 direct sentences.
 Memory: ${JSON.stringify(input.memory)}
 Candidate resume context: ${JSON.stringify(input.resume)}
 Previous turns: ${JSON.stringify(input.previousTurns)}
@@ -500,6 +551,7 @@ export function buildSession(role: JobRole, difficulty: InterviewSession["diffic
     startedAt: new Date().toISOString(),
     turns: [],
     currentQuestion: null,
+    questionQueue: [],
     interviewComplete: false,
     currentStage: "Applied",
     hiringOutcome: null,

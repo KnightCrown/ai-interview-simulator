@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  appendQueuedQuestion,
   buildFallbackEvaluation,
   buildFallbackFinalReport,
   buildFallbackQuestion,
   buildSession,
+  getNextQueuedQuestionTargetIndex,
   normalizeAnswerEvaluation,
   normalizeFinalReport
 } from "@/lib/interview-engine";
@@ -34,6 +36,8 @@ describe("buildFallbackEvaluation", () => {
     expect(evaluation.missingResumeHighlights).toContain("JavaScript");
     expect(evaluation.missedOpportunityDetails[0]?.impactScoreIncrease).toBeGreaterThan(0);
     expect(evaluation.interviewerReaction).toContain("specific");
+    expect(evaluation.interviewerReaction).toMatch(/^I'm /);
+    expect(evaluation.interviewerReaction.toLowerCase()).not.toContain("the interviewer likely");
     expect(evaluation.liveConfidence).toBeGreaterThan(0);
   });
 });
@@ -45,6 +49,41 @@ describe("buildFallbackQuestion", () => {
 
     expect(question).toContain("Machine Learning Engineer");
     expect(question.toLowerCase()).toMatch(/challenging|skeptical|evidence|tradeoff|depth/);
+  });
+
+  it("can prepare a later fallback question without waiting for previous turns", () => {
+    const session = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 1 });
+
+    expect(question).toContain("tradeoff");
+  });
+});
+
+describe("question queue helpers", () => {
+  it("starts sessions with an empty predictive question queue", () => {
+    const session = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+
+    expect(session.questionQueue).toEqual([]);
+  });
+
+  it("targets the next background question after the active question and queued items", () => {
+    const session = {
+      ...buildSession("Software Engineer", "Medium", "Skip Resume", null),
+      currentQuestion: "Question 1",
+      questionQueue: ["Question 2"]
+    };
+
+    expect(getNextQueuedQuestionTargetIndex(session)).toBe(2);
+  });
+
+  it("deduplicates queued questions against the active question", () => {
+    const session = {
+      ...buildSession("Software Engineer", "Medium", "Skip Resume", null),
+      currentQuestion: "Question 1"
+    };
+
+    expect(appendQueuedQuestion(session, "Question 1").questionQueue).toEqual([]);
+    expect(appendQueuedQuestion(session, "Question 2").questionQueue).toEqual(["Question 2"]);
   });
 });
 
@@ -170,6 +209,7 @@ describe("buildFallbackFinalReport", () => {
       resume: SAMPLE_RESUME,
       startedAt: new Date().toISOString(),
       currentQuestion: null,
+      questionQueue: [],
       interviewComplete: true,
       currentStage: "Final Round",
       hiringOutcome: "Selected",

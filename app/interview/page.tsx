@@ -2,10 +2,10 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FeedbackPanel } from "@/components/feedback-panel";
+import { FeedbackPanel, type CoachingThought } from "@/components/feedback-panel";
 import { InterviewerAvatar } from "@/components/interviewer-avatar";
 import { TypingQuestion } from "@/components/typing-question";
-import { AnswerEvaluation, InterviewSession } from "@/lib/interview-types";
+import { AnswerEvaluation, InterviewSession, InterviewTurn } from "@/lib/interview-types";
 import { liveConfidenceFromSignals } from "@/lib/interview-scoring";
 import { useFaceTracking } from "@/hooks/useFaceTracking";
 import { useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
@@ -74,22 +74,36 @@ export default function InterviewPage() {
   } = speech;
   const { speak, stop, mouthLevel, emotion, isSpeaking } = interviewerSpeech;
   const [latestEvaluation, setLatestEvaluation] = useState<AnswerEvaluation | null>(null);
+  const [coachingThoughts, setCoachingThoughts] = useState<CoachingThought[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCoaching, setShowCoaching] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [mainVideo, setMainVideo] = useState<MainVideo>("interviewer");
   const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
+  const [isPrefetchingQuestion, setIsPrefetchingQuestion] = useState(false);
+  const [pendingAnswerCount, setPendingAnswerCount] = useState(0);
   const [answerSecondsRemaining, setAnswerSecondsRemaining] = useState(ANSWER_SECONDS);
+  const sessionRef = useRef<InterviewSession | null>(null);
+  const confirmedSessionRef = useRef<InterviewSession | null>(null);
   const lastSpokenQuestionRef = useRef<string | null>(null);
   const autoSubmittedRef = useRef(false);
   const submitAnswerRef = useRef<(() => void) | null>(null);
+  const prefetchKeyRef = useRef<string | null>(null);
+  const answerSubmissionChainRef = useRef<Promise<InterviewSession | null>>(Promise.resolve(null));
 
   useEffect(() => {
     if (!session) {
       router.replace("/");
     }
   }, [router, session]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+    if (session && pendingAnswerCount === 0) {
+      confirmedSessionRef.current = session;
+    }
+  }, [pendingAnswerCount, session]);
 
   useEffect(() => {
     if (mainVideo !== "candidate") {
@@ -102,7 +116,7 @@ export default function InterviewPage() {
   const transcriptPlaceholder = showTranscript ? "Your text will appear here." : "Answer timer starts when the interviewer finishes speaking.";
   const repeatedFillerWords = getRepeatedFillerWords(currentTranscript, speechMetrics.fillerWords);
   const speakingPaceLabel = getSpeakingPaceLabel(speechMetrics.speakingPace);
-  const currentQuestionNumber = session ? Math.min(session.turns.length + 1, TOTAL_QUESTIONS) : 1;
+  const currentQuestionNumber = session ? Math.min(session.turns.length + pendingAnswerCount + 1, TOTAL_QUESTIONS) : 1;
   const answerDurationSeconds = Math.max(1, ANSWER_SECONDS - answerSecondsRemaining);
 
   const liveConfidence = useMemo(() => {
@@ -135,57 +149,241 @@ export default function InterviewPage() {
     }
   }, [session, showTranscript, speechIsListening, speechIsSupported, startListening, stopListening]);
 
+  const prefetchNextQuestion = useCallback(
+    async (baseSession: InterviewSession, pendingAnswer: string, targetTurnIndex?: number) => {
+      const questionQueue = baseSession.questionQueue ?? [];
+      const resolvedTargetTurnIndex = targetTurnIndex ?? baseSession.turns.length + 1 + questionQueue.length;
+
+      if (baseSession.interviewComplete || questionQueue.length > 0 || resolvedTargetTurnIndex >= TOTAL_QUESTIONS) {
+        return;
+      }
+
+      const prefetchKey = `${baseSession.id}:${resolvedTargetTurnIndex}:${baseSession.currentQuestion ?? ""}`;
+
+      if (prefetchKeyRef.current === prefetchKey) {
+        return;
+      }
+
+      prefetchKeyRef.current = prefetchKey;
+      setIsPrefetchingQuestion(true);
+
+      try {
+        const response = await fetch("/api/interview/question/prefetch", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            session: baseSession,
+            pendingAnswer,
+            targetTurnIndex: resolvedTargetTurnIndex
+          })
+        });
+
+        if (!response.ok) {
+          return;
+        }
+
+        const data = (await response.json()) as { session: InterviewSession };
+        const currentSession = sessionRef.current;
+
+        if (
+          currentSession &&
+          currentSession.id === baseSession.id &&
+          currentSession.currentQuestion === baseSession.currentQuestion &&
+          (currentSession.questionQueue ?? []).length === 0
+        ) {
+          const mergedSession = {
+            ...currentSession,
+            questionQueue: data.session.questionQueue ?? []
+          };
+
+          sessionRef.current = mergedSession;
+          setSession(mergedSession);
+        }
+      } finally {
+        if (prefetchKeyRef.current === prefetchKey) {
+          prefetchKeyRef.current = null;
+          setIsPrefetchingQuestion(false);
+        }
+      }
+    },
+    [setSession]
+  );
+
+  const queueAnswerSubmission = useCallback(
+    (input: {
+      submissionSession: InterviewSession;
+      transcriptForEvaluation: string;
+      durationSeconds: number;
+      speechMetrics: InterviewTurn["speechMetrics"];
+      faceMetrics: InterviewTurn["faceMetrics"];
+      questionBeingAnswered: string | null;
+      questionQueueForSubmission: string[];
+      optimisticSession: InterviewSession | null;
+      shouldNavigateToResults: boolean;
+    }) => {
+      const previousSubmissionPromise = answerSubmissionChainRef.current;
+      const runSubmission = async (previousConfirmedSession: InterviewSession | null) => {
+        const baseSession = previousConfirmedSession ?? confirmedSessionRef.current ?? input.submissionSession;
+        const sessionForSubmission = {
+          ...baseSession,
+          currentQuestion: input.questionBeingAnswered,
+          questionQueue: input.questionQueueForSubmission
+        };
+
+        const response = await fetch("/api/interview/answer", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            session: sessionForSubmission,
+            transcript: input.transcriptForEvaluation,
+            durationSeconds: input.durationSeconds,
+            speechMetrics: input.speechMetrics,
+            faceMetrics: input.faceMetrics
+          })
+        });
+
+        if (!response.ok) {
+          throw new Error("The answer could not be evaluated. Please try again.");
+        }
+
+        const data = (await response.json()) as { session: InterviewSession; evaluation: AnswerEvaluation };
+        confirmedSessionRef.current = data.session;
+
+        const currentSession = sessionRef.current;
+        const mergedSession =
+          input.optimisticSession && currentSession?.id === data.session.id && !data.session.interviewComplete
+            ? {
+                ...data.session,
+                currentQuestion: currentSession.currentQuestion ?? data.session.currentQuestion,
+                questionQueue: (currentSession.questionQueue ?? []).length > 0 ? currentSession.questionQueue : data.session.questionQueue
+              }
+            : data.session;
+
+        sessionRef.current = mergedSession;
+        setSession(mergedSession);
+        setLatestEvaluation(data.evaluation);
+        setCoachingThoughts((current) => {
+          const id = data.session.turns.at(-1)?.id ?? crypto.randomUUID();
+          const nextThought = {
+            id,
+            thought: data.evaluation.interviewerReaction
+          };
+
+          return [nextThought, ...current.filter((item) => item.id !== id)];
+        });
+        setShowCoaching(true);
+        setPendingAnswerCount((current) => Math.max(0, current - 1));
+
+        if (data.session.interviewComplete || input.shouldNavigateToResults) {
+          router.push("/results");
+        } else if (!input.optimisticSession) {
+          autoSubmittedRef.current = false;
+          setAnswerSecondsRemaining(ANSWER_SECONDS);
+        }
+
+        return data.session;
+      };
+
+      const submissionPromise = previousSubmissionPromise
+        .catch(() => confirmedSessionRef.current)
+        .then(runSubmission)
+        .catch((error) => {
+          setPendingAnswerCount((current) => Math.max(0, current - 1));
+          setSubmitError(error instanceof Error ? error.message : "The answer could not be evaluated. Please try again.");
+          return confirmedSessionRef.current;
+        });
+
+      answerSubmissionChainRef.current = submissionPromise;
+      return submissionPromise;
+    },
+    [router, setSession]
+  );
+
   const submitAnswer = useCallback(async () => {
     if (!session || isSubmitting) {
       return;
     }
 
     const transcriptForEvaluation = visibleTranscript.trim();
+    const questionQueue = session.questionQueue ?? [];
+    const [readyQuestion, ...remainingQuestionQueue] = questionQueue;
+    const isFinalQuestion = currentQuestionNumber >= TOTAL_QUESTIONS;
+    const optimisticSession =
+      !isFinalQuestion
+        ? {
+            ...session,
+            currentQuestion: readyQuestion ?? null,
+            questionQueue: remainingQuestionQueue
+          }
+        : null;
 
     setIsSubmitting(true);
     setSubmitError(null);
     setCaptureEnabled(false);
     setShowTranscript(false);
     stop();
+    resetTranscript();
+    setAnswerSecondsRemaining(ANSWER_SECONDS);
+    autoSubmittedRef.current = false;
 
-    try {
-      const response = await fetch("/api/interview/answer", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          session,
-          transcript: transcriptForEvaluation,
-          durationSeconds: answerDurationSeconds,
-          speechMetrics,
-          faceMetrics: face.metrics
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error("The answer could not be evaluated. Please try again.");
-      }
-
-      const data = (await response.json()) as { session: InterviewSession; evaluation: AnswerEvaluation };
-      resetTranscript();
-      setSession(data.session);
-      setLatestEvaluation(data.evaluation);
-      setShowCoaching(true);
-      setAnswerSecondsRemaining(ANSWER_SECONDS);
-      autoSubmittedRef.current = false;
-
-      if (data.session.interviewComplete) {
-        router.push("/results");
-      }
-    } catch (error) {
-      setCaptureEnabled(true);
-      setShowTranscript(true);
-      setSubmitError(error instanceof Error ? error.message : "The answer could not be evaluated. Please try again.");
-    } finally {
+    if (optimisticSession) {
+      setPendingAnswerCount((current) => current + 1);
+      sessionRef.current = optimisticSession;
+      setSession(optimisticSession);
       setIsSubmitting(false);
+
+      if (readyQuestion) {
+        const nextTargetTurnIndex = session.turns.length + pendingAnswerCount + 2 + remainingQuestionQueue.length;
+        void prefetchNextQuestion(optimisticSession, transcriptForEvaluation, nextTargetTurnIndex);
+      }
+      void queueAnswerSubmission({
+        submissionSession: session,
+        transcriptForEvaluation,
+        durationSeconds: answerDurationSeconds,
+        speechMetrics,
+        faceMetrics: face.metrics,
+        questionBeingAnswered: session.currentQuestion,
+        questionQueueForSubmission: questionQueue,
+        optimisticSession,
+        shouldNavigateToResults: false
+      });
+      return;
     }
-  }, [answerDurationSeconds, face.metrics, isSubmitting, resetTranscript, router, session, setCaptureEnabled, setSession, speechMetrics, stop, visibleTranscript]);
+
+    setPendingAnswerCount((current) => current + 1);
+    void queueAnswerSubmission({
+      submissionSession: session,
+      transcriptForEvaluation,
+      durationSeconds: answerDurationSeconds,
+      speechMetrics,
+      faceMetrics: face.metrics,
+      questionBeingAnswered: session.currentQuestion,
+      questionQueueForSubmission: questionQueue,
+      optimisticSession,
+      shouldNavigateToResults: isFinalQuestion
+    }).finally(() => {
+      setIsSubmitting(false);
+    });
+  }, [
+    answerDurationSeconds,
+    currentQuestionNumber,
+    face.metrics,
+    isSubmitting,
+    pendingAnswerCount,
+    prefetchNextQuestion,
+    queueAnswerSubmission,
+    resetTranscript,
+    session,
+    setCaptureEnabled,
+    setSession,
+    speechMetrics,
+    stop,
+    visibleTranscript
+  ]);
 
   useEffect(() => {
     submitAnswerRef.current = () => {
@@ -226,7 +424,7 @@ export default function InterviewPage() {
   }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, stop, stopListening]);
 
   useEffect(() => {
-    if (!showTranscript || isSubmitting || session?.interviewComplete) {
+    if (!showTranscript || session?.interviewComplete) {
       return;
     }
 
@@ -245,7 +443,32 @@ export default function InterviewPage() {
     return () => {
       window.clearTimeout(timer);
     };
-  }, [answerSecondsRemaining, isSubmitting, session?.interviewComplete, showTranscript]);
+  }, [answerSecondsRemaining, session?.interviewComplete, showTranscript]);
+
+  useEffect(() => {
+    if (!session || !showTranscript || isSubmitting || isPrefetchingQuestion || (session.questionQueue ?? []).length > 0) {
+      return;
+    }
+
+    const wordCount = visibleTranscript.split(/\s+/).filter(Boolean).length;
+
+    if (wordCount < 12) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const targetTurnIndex = session.turns.length + pendingAnswerCount + 1 + (session.questionQueue ?? []).length;
+      void prefetchNextQuestion(session, visibleTranscript, targetTurnIndex);
+    }, 700);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [isPrefetchingQuestion, isSubmitting, pendingAnswerCount, prefetchNextQuestion, session, showTranscript, visibleTranscript]);
+
+  const dismissCoachingThought = useCallback((id: string) => {
+    setCoachingThoughts((current) => current.filter((item) => item.id !== id));
+  }, []);
 
   if (!session) {
     return null;
@@ -303,7 +526,7 @@ export default function InterviewPage() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[118rem] gap-6 px-5 py-8 lg:grid-cols-[16rem_minmax(0,68rem)_13rem]">
+      <div className="mx-auto grid max-w-[124rem] gap-6 px-5 py-8 lg:grid-cols-[16rem_minmax(0,68rem)_24rem]">
         <aside className="rounded-2xl border border-slate-200 bg-white p-6 shadow-panel lg:sticky lg:top-8 lg:h-[calc(100vh-7rem)] lg:overflow-y-auto">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Live insights</p>
 
@@ -450,7 +673,7 @@ export default function InterviewPage() {
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Interviewer question</p>
               <div className="mt-3 flex items-start justify-between gap-5">
                 <p className="text-justify text-[1.1rem] font-medium leading-[1.45rem] text-ink">
-                  <TypingQuestion text={session.currentQuestion} />
+                  <TypingQuestion text={session.currentQuestion ?? "Preparing next question..."} />
                 </p>
                 {showTranscript ? (
                   <p className="shrink-0 whitespace-nowrap text-[1.1rem] font-medium leading-[1.45rem] text-ink">
@@ -481,7 +704,7 @@ export default function InterviewPage() {
           </div>
         </section>
 
-        <aside className="space-y-4">
+        <aside className="space-y-4 lg:sticky lg:top-8 lg:self-start">
           <button
             type="button"
             onClick={() => setShowCoaching((current) => !current)}
@@ -491,8 +714,8 @@ export default function InterviewPage() {
           </button>
 
           {showCoaching ? (
-            <div className="fixed right-5 top-24 z-30 max-h-[calc(100vh-7rem)] w-[min(26rem,calc(100vw-2.5rem))] overflow-y-auto">
-              <FeedbackPanel evaluation={latestEvaluation} />
+            <div className="max-h-[calc(100vh-12rem)] w-full overflow-y-auto">
+              <FeedbackPanel latestEvaluation={latestEvaluation} thoughts={coachingThoughts} onDismissThought={dismissCoachingThought} />
             </div>
           ) : null}
         </aside>

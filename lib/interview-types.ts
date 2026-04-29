@@ -77,6 +77,7 @@ export interface InterviewSession {
   startedAt: string;
   turns: InterviewTurn[];
   currentQuestion: string | null;
+  questionQueue: string[];
   interviewComplete: boolean;
   currentStage: HiringStage;
   hiringOutcome: FunnelOutcome | null;

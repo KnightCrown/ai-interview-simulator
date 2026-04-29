@@ -21,7 +21,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const parsed = JSON.parse(stored) as InterviewSession;
       setSessionState({
         ...parsed,
-        difficulty: parsed.difficulty ?? "Medium"
+        difficulty: parsed.difficulty ?? "Medium",
+        questionQueue: parsed.questionQueue ?? []
       });
     }
   }, []);
