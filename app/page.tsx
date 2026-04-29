@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { buildSafeResumePreview } from "@/lib/interview-scoring";
+import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
 import { JOB_ROLES, SAMPLE_RESUME } from "@/lib/sample-data";
 import { InterviewDifficulty, InterviewSession, ResumeMode } from "@/lib/interview-types";
 import { useInterviewSession } from "@/lib/session-store";
@@ -16,12 +17,82 @@ export default function LandingPage() {
   const [difficulty, setDifficulty] = useState<InterviewDifficulty>("Medium");
   const [resumeMode, setResumeMode] = useState<ResumeMode>("Use Sample Resume");
   const [isStarting, setIsStarting] = useState(false);
+  const [isCheckingMedia, setIsCheckingMedia] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
+  const [showDeviceDialog, setShowDeviceDialog] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState("");
+  const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState("");
   const sampleResume = buildSafeResumePreview(SAMPLE_RESUME);
 
-  const startInterview = async () => {
+  const getNormalizedRole = () => {
     const role = selectedRole === "Other" ? customRole : selectedRole;
-    const normalizedRole = role.trim();
+    return role.trim();
+  };
+
+  const stopMediaStream = (stream: MediaStream) => {
+    stream.getTracks().forEach((track) => track.stop());
+  };
+
+  const refreshMediaDevices = async () => {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const microphones = devices.filter((device) => device.kind === "audioinput");
+    const cameras = devices.filter((device) => device.kind === "videoinput");
+    const savedPreferences = loadMediaDevicePreferences();
+
+    setAudioDevices(microphones);
+    setVideoDevices(cameras);
+    setSelectedAudioDeviceId(
+      microphones.find((device) => device.deviceId === savedPreferences?.audioInputId)?.deviceId ?? microphones[0]?.deviceId ?? ""
+    );
+    setSelectedVideoDeviceId(
+      cameras.find((device) => device.deviceId === savedPreferences?.videoInputId)?.deviceId ?? cameras[0]?.deviceId ?? ""
+    );
+
+    return { microphones, cameras };
+  };
+
+  const openDeviceDialog = async () => {
+    const normalizedRole = getNormalizedRole();
+    if (!normalizedRole) {
+      setStartError("Enter a job role before starting.");
+      return;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia || !navigator.mediaDevices.enumerateDevices) {
+      setStartError("This browser cannot access camera and microphone devices.");
+      return;
+    }
+
+    setIsCheckingMedia(true);
+    setStartError(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: {
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }
+      });
+      stopMediaStream(stream);
+
+      const { microphones, cameras } = await refreshMediaDevices();
+      if (microphones.length === 0 || cameras.length === 0) {
+        throw new Error("A microphone and camera are required to start the interview.");
+      }
+
+      setShowDeviceDialog(true);
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Allow camera and microphone access to start the interview.");
+    } finally {
+      setIsCheckingMedia(false);
+    }
+  };
+
+  const startInterview = async () => {
+    const normalizedRole = getNormalizedRole();
     if (!normalizedRole) {
       setStartError("Enter a job role before starting.");
       return;
@@ -53,6 +124,39 @@ export default function LandingPage() {
       setIsStarting(false);
     }
   };
+
+  const confirmDevicesAndStart = async () => {
+    if (!selectedAudioDeviceId || !selectedVideoDeviceId) {
+      setStartError("Choose a microphone and camera before starting.");
+      return;
+    }
+
+    setIsStarting(true);
+    setStartError(null);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { deviceId: { exact: selectedAudioDeviceId } },
+        video: {
+          deviceId: { exact: selectedVideoDeviceId },
+          width: { ideal: 640 },
+          height: { ideal: 480 }
+        }
+      });
+      stopMediaStream(stream);
+      saveMediaDevicePreferences({
+        audioInputId: selectedAudioDeviceId,
+        videoInputId: selectedVideoDeviceId
+      });
+      setShowDeviceDialog(false);
+      await startInterview();
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : "Could not access the selected microphone and camera.");
+      setIsStarting(false);
+    }
+  };
+
+  const startButtonLabel = isStarting ? "Preparing..." : isCheckingMedia ? "Checking devices..." : "Start interview";
 
   return (
     <main className="mx-auto min-h-screen max-w-7xl px-6 py-12">
@@ -90,7 +194,7 @@ export default function LandingPage() {
             className="mt-6 space-y-5"
             onSubmit={(event) => {
               event.preventDefault();
-              void startInterview();
+              void openDeviceDialog();
             }}
           >
             <label className="block text-sm font-medium text-slate-700">
@@ -185,10 +289,10 @@ export default function LandingPage() {
 
             <button
               type="submit"
-              disabled={isStarting}
+              disabled={isStarting || isCheckingMedia}
               className="w-full rounded-2xl bg-ink px-5 py-3 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {isStarting ? "Preparing..." : "Start interview"}
+              {startButtonLabel}
             </button>
           </form>
 
@@ -197,6 +301,79 @@ export default function LandingPage() {
           </p>
         </div>
       </section>
+
+      {showDeviceDialog ? (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/45 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-panel">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-semibold text-ink">Choose interview devices</h2>
+                <p className="mt-2 text-sm text-slate-600">Camera and microphone access is ready.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowDeviceDialog(false)}
+                className="grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink"
+                aria-label="Close device selection"
+              >
+                x
+              </button>
+            </div>
+
+            <div className="mt-6 space-y-4">
+              <label className="block text-sm font-medium text-slate-700">
+                Microphone
+                <select
+                  value={selectedAudioDeviceId}
+                  onChange={(event) => setSelectedAudioDeviceId(event.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
+                >
+                  {audioDevices.map((device, index) => (
+                    <option key={device.deviceId || index} value={device.deviceId}>
+                      {device.label || `Microphone ${index + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="block text-sm font-medium text-slate-700">
+                Camera
+                <select
+                  value={selectedVideoDeviceId}
+                  onChange={(event) => setSelectedVideoDeviceId(event.target.value)}
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
+                >
+                  {videoDevices.map((device, index) => (
+                    <option key={device.deviceId || index} value={device.deviceId}>
+                      {device.label || `Camera ${index + 1}`}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            {startError ? <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-900">{startError}</p> : null}
+
+            <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={() => setShowDeviceDialog(false)}
+                className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmDevicesAndStart()}
+                disabled={isStarting}
+                className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                {isStarting ? "Preparing..." : "Use these devices"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mt-8 text-sm text-slate-500">
         Looking for the final report later? Visit{" "}

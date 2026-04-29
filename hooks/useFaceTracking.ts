@@ -26,7 +26,7 @@ type FaceMeshInstance = {
   close?: () => Promise<void> | void;
 };
 
-export function useFaceTracking() {
+export function useFaceTracking(preferredDeviceId?: string | null) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [metrics, setMetrics] = useState<FaceMetrics>(INITIAL_METRICS);
   const [isReady, setIsReady] = useState(false);
@@ -54,7 +54,15 @@ export function useFaceTracking() {
           setVideoDevices(cameras);
         }
 
-        const selectedDevice = cameras[selectedDeviceIndex % Math.max(cameras.length, 1)];
+        const preferredDeviceIndex = preferredDeviceId ? cameras.findIndex((device) => device.deviceId === preferredDeviceId) : -1;
+        const resolvedDeviceIndex =
+          preferredDeviceIndex >= 0 && selectedDeviceIndex === 0
+            ? preferredDeviceIndex
+            : selectedDeviceIndex % Math.max(cameras.length, 1);
+        const selectedDevice = cameras[resolvedDeviceIndex];
+        if (isMounted && cameras.length > 0 && resolvedDeviceIndex !== selectedDeviceIndex) {
+          setSelectedDeviceIndex(resolvedDeviceIndex);
+        }
         mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: 640,
@@ -159,7 +167,7 @@ export function useFaceTracking() {
       mediaStream?.getTracks().forEach((track) => track.stop());
       void faceMesh?.close?.();
     };
-  }, [selectedDeviceIndex]);
+  }, [preferredDeviceId, selectedDeviceIndex]);
 
   const refreshVideoDevices = async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {

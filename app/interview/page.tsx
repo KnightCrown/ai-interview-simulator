@@ -10,10 +10,12 @@ import { liveConfidenceFromSignals } from "@/lib/interview-scoring";
 import { useFaceTracking } from "@/hooks/useFaceTracking";
 import { useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
 import { useInterviewSession } from "@/lib/session-store";
 
 const TOTAL_QUESTIONS = 5;
 const ANSWER_SECONDS = 60;
+const QUESTION_HANDOFF_DELAY_MS = 500;
 
 type MainVideo = "interviewer" | "candidate";
 
@@ -58,7 +60,10 @@ export default function InterviewPage() {
   const router = useRouter();
   const { session, setSession } = useInterviewSession();
   const speech = useSpeechRecognition();
-  const face = useFaceTracking();
+  const [preferredVideoDeviceId, setPreferredVideoDeviceId] = useState<string | null>(
+    () => loadMediaDevicePreferences()?.videoInputId ?? null
+  );
+  const face = useFaceTracking(preferredVideoDeviceId);
   const interviewerSpeech = useInterviewerSpeech();
   const {
     elapsedSeconds,
@@ -87,6 +92,7 @@ export default function InterviewPage() {
   const sessionRef = useRef<InterviewSession | null>(null);
   const confirmedSessionRef = useRef<InterviewSession | null>(null);
   const lastSpokenQuestionRef = useRef<string | null>(null);
+  const shouldDelayNextQuestionRef = useRef(false);
   const autoSubmittedRef = useRef(false);
   const submitAnswerRef = useRef<(() => void) | null>(null);
   const prefetchKeyRef = useRef<string | null>(null);
@@ -331,6 +337,7 @@ export default function InterviewPage() {
     autoSubmittedRef.current = false;
 
     if (optimisticSession) {
+      shouldDelayNextQuestionRef.current = true;
       setPendingAnswerCount((current) => current + 1);
       sessionRef.current = optimisticSession;
       setSession(optimisticSession);
@@ -355,6 +362,9 @@ export default function InterviewPage() {
     }
 
     setPendingAnswerCount((current) => current + 1);
+    if (!isFinalQuestion) {
+      shouldDelayNextQuestionRef.current = true;
+    }
     void queueAnswerSubmission({
       submissionSession: session,
       transcriptForEvaluation,
@@ -406,6 +416,15 @@ export default function InterviewPage() {
     resetTranscript();
 
     void (async () => {
+      if (shouldDelayNextQuestionRef.current) {
+        shouldDelayNextQuestionRef.current = false;
+        await new Promise((resolve) => window.setTimeout(resolve, QUESTION_HANDOFF_DELAY_MS));
+
+        if (lastSpokenQuestionRef.current !== question) {
+          return;
+        }
+      }
+
       try {
         await speak(question);
       } catch {
@@ -645,6 +664,11 @@ export default function InterviewPage() {
                           type="button"
                           onClick={() => {
                             void face.selectCamera(index);
+                            saveMediaDevicePreferences({
+                              audioInputId: loadMediaDevicePreferences()?.audioInputId ?? "",
+                              videoInputId: device.deviceId
+                            });
+                            setPreferredVideoDeviceId(device.deviceId);
                             setCameraMenuOpen(false);
                           }}
                           className={`block w-full rounded-lg px-3 py-2 text-left transition hover:bg-white/15 ${
