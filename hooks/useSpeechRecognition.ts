@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SpeechMetrics } from "@/lib/interview-types";
 
 type RecognitionInstance = SpeechRecognition;
@@ -12,6 +12,10 @@ type RecognitionEventLike = {
       transcript: string;
     };
   }>;
+};
+
+type StartListeningOptions = {
+  reset?: boolean;
 };
 
 declare global {
@@ -47,6 +51,8 @@ export function useSpeechRecognition() {
   const recognitionRef = useRef<RecognitionInstance | null>(null);
   const timerRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
+  const isListeningRef = useRef(false);
+  const captureEnabledRef = useRef(false);
 
   useEffect(() => {
     const SpeechRecognitionConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -61,6 +67,12 @@ export function useSpeechRecognition() {
     recognition.lang = "en-US";
 
     recognition.onresult = (event) => {
+      if (!captureEnabledRef.current) {
+        setTranscript("");
+        setInterimTranscript("");
+        return;
+      }
+
       let finalText = "";
       let interimText = "";
 
@@ -83,6 +95,7 @@ export function useSpeechRecognition() {
     };
 
     recognition.onend = () => {
+      isListeningRef.current = false;
       setIsListening(false);
       if (timerRef.current) {
         window.clearInterval(timerRef.current);
@@ -91,6 +104,7 @@ export function useSpeechRecognition() {
     };
 
     recognition.onerror = () => {
+      isListeningRef.current = false;
       setIsListening(false);
     };
 
@@ -105,28 +119,57 @@ export function useSpeechRecognition() {
     };
   }, []);
 
-  const startListening = () => {
-    if (!recognitionRef.current || isListening) {
-      return;
-    }
-
+  const resetTranscript = useCallback(() => {
     setTranscript("");
     setInterimTranscript("");
     setElapsedSeconds(0);
-    startTimeRef.current = Date.now();
+    startTimeRef.current = isListeningRef.current ? Date.now() : null;
+  }, []);
+
+  const setCaptureEnabled = useCallback((enabled: boolean) => {
+    captureEnabledRef.current = enabled;
+    setTranscript("");
+    setInterimTranscript("");
+    setElapsedSeconds(0);
+    startTimeRef.current = enabled && isListeningRef.current ? Date.now() : null;
+  }, []);
+
+  const startListening = useCallback((options: StartListeningOptions = {}) => {
+    if (!recognitionRef.current || isListeningRef.current) {
+      return;
+    }
+
+    const shouldReset = options.reset ?? true;
+    if (shouldReset) {
+      resetTranscript();
+      startTimeRef.current = Date.now();
+    } else if (!startTimeRef.current) {
+      startTimeRef.current = Date.now();
+    }
+
     timerRef.current = window.setInterval(() => {
       if (startTimeRef.current) {
         setElapsedSeconds(Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000)));
       }
     }, 1000);
 
-    recognitionRef.current.start();
-    setIsListening(true);
-  };
+    try {
+      recognitionRef.current.start();
+      isListeningRef.current = true;
+      setIsListening(true);
+    } catch {
+      isListeningRef.current = false;
+      setIsListening(false);
+      if (timerRef.current) {
+        window.clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    }
+  }, [resetTranscript]);
 
-  const stopListening = () => {
+  const stopListening = useCallback(() => {
     recognitionRef.current?.stop();
-  };
+  }, []);
 
   const metrics = useMemo<SpeechMetrics>(() => {
     const fullTranscript = `${transcript} ${interimTranscript}`.trim().toLowerCase();
@@ -153,6 +196,8 @@ export function useSpeechRecognition() {
     elapsedSeconds,
     metrics,
     startListening,
-    stopListening
+    stopListening,
+    resetTranscript,
+    setCaptureEnabled
   };
 }

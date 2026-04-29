@@ -31,6 +31,8 @@ export function useFaceTracking() {
   const [metrics, setMetrics] = useState<FaceMetrics>(INITIAL_METRICS);
   const [isReady, setIsReady] = useState(false);
   const [permissionError, setPermissionError] = useState<string | null>(null);
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceIndex, setSelectedDeviceIndex] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -46,11 +48,18 @@ export function useFaceTracking() {
       try {
         const [{ FaceMesh }] = await Promise.all([import("@mediapipe/face_mesh")]);
 
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const cameras = devices.filter((device) => device.kind === "videoinput");
+        if (isMounted && cameras.length > 0) {
+          setVideoDevices(cameras);
+        }
+
+        const selectedDevice = cameras[selectedDeviceIndex % Math.max(cameras.length, 1)];
         mediaStream = await navigator.mediaDevices.getUserMedia({
           video: {
             width: 640,
             height: 480,
-            facingMode: "user"
+            ...(selectedDevice ? { deviceId: { exact: selectedDevice.deviceId } } : { facingMode: "user" })
           },
           audio: false
         });
@@ -150,12 +159,31 @@ export function useFaceTracking() {
       mediaStream?.getTracks().forEach((track) => track.stop());
       void faceMesh?.close?.();
     };
-  }, []);
+  }, [selectedDeviceIndex]);
+
+  const cycleCamera = async () => {
+    let cameras = videoDevices;
+
+    if (navigator.mediaDevices?.enumerateDevices) {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      cameras = devices.filter((device) => device.kind === "videoinput");
+      setVideoDevices(cameras);
+    }
+
+    if (cameras.length <= 1) {
+      return;
+    }
+
+    setSelectedDeviceIndex((current) => (current + 1) % cameras.length);
+  };
 
   return {
     videoRef,
     metrics,
     isReady,
-    permissionError
+    permissionError,
+    videoDevices,
+    selectedDevice: videoDevices[selectedDeviceIndex % Math.max(videoDevices.length, 1)] ?? null,
+    cycleCamera
   };
 }

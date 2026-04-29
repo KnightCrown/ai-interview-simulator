@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackPanel } from "@/components/feedback-panel";
 import { InterviewerAvatar } from "@/components/interviewer-avatar";
 import { TypingQuestion } from "@/components/typing-question";
@@ -13,6 +13,9 @@ import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useInterviewSession } from "@/lib/session-store";
 
 const TOTAL_QUESTIONS = 5;
+const ANSWER_SECONDS = 60;
+
+type MainVideo = "interviewer" | "candidate";
 
 function formatTime(seconds: number) {
   const minutes = Math.floor(seconds / 60);
@@ -57,13 +60,29 @@ export default function InterviewPage() {
   const speech = useSpeechRecognition();
   const face = useFaceTracking();
   const interviewerSpeech = useInterviewerSpeech();
+  const {
+    elapsedSeconds,
+    interimTranscript,
+    isListening: speechIsListening,
+    isSupported: speechIsSupported,
+    metrics: speechMetrics,
+    resetTranscript,
+    setCaptureEnabled,
+    startListening,
+    stopListening,
+    transcript
+  } = speech;
   const { speak, stop, mouthLevel, emotion, isSpeaking } = interviewerSpeech;
   const [latestEvaluation, setLatestEvaluation] = useState<AnswerEvaluation | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCoaching, setShowCoaching] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [mainVideo, setMainVideo] = useState<MainVideo>("interviewer");
+  const [answerSecondsRemaining, setAnswerSecondsRemaining] = useState(ANSWER_SECONDS);
   const lastSpokenQuestionRef = useRef<string | null>(null);
+  const autoSubmittedRef = useRef(false);
+  const submitAnswerRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     if (!session) {
@@ -71,10 +90,12 @@ export default function InterviewPage() {
     }
   }, [router, session]);
 
-  const currentTranscript = `${speech.transcript} ${speech.interimTranscript}`.trim();
-  const repeatedFillerWords = getRepeatedFillerWords(currentTranscript, speech.metrics.fillerWords);
-  const speakingPaceLabel = getSpeakingPaceLabel(speech.metrics.speakingPace);
+  const currentTranscript = `${transcript} ${interimTranscript}`.trim();
+  const visibleTranscript = showTranscript ? currentTranscript : "";
+  const repeatedFillerWords = getRepeatedFillerWords(currentTranscript, speechMetrics.fillerWords);
+  const speakingPaceLabel = getSpeakingPaceLabel(speechMetrics.speakingPace);
   const currentQuestionNumber = session ? Math.min(session.turns.length + 1, TOTAL_QUESTIONS) : 1;
+  const answerDurationSeconds = Math.max(1, ANSWER_SECONDS - answerSecondsRemaining);
 
   const liveConfidence = useMemo(() => {
     if (!session) {
@@ -83,55 +104,31 @@ export default function InterviewPage() {
 
     return liveConfidenceFromSignals({
       role: session.role,
-      transcript: currentTranscript,
-      speechMetrics: speech.metrics,
+      transcript: visibleTranscript,
+      speechMetrics,
       faceMetrics: face.metrics
     });
-  }, [currentTranscript, face.metrics, session, speech.metrics]);
+  }, [face.metrics, session, speechMetrics, visibleTranscript]);
 
   useEffect(() => {
-    if (!session?.currentQuestion || session.currentQuestion === lastSpokenQuestionRef.current) {
+    if (!session || !speechIsSupported || speechIsListening) {
       return;
     }
 
-    lastSpokenQuestionRef.current = session.currentQuestion;
-    void speak(session.currentQuestion);
-  }, [session?.currentQuestion, speak]);
+    startListening({ reset: false });
+  }, [session, speechIsListening, speechIsSupported, startListening]);
 
-  if (!session) {
-    return null;
-  }
-
-  const endInterview = () => {
-    speech.stopListening();
-    stop();
-    setSession({
-      ...session,
-      interviewComplete: true
-    });
-    router.push("/results");
-  };
-
-  const startCandidateResponse = () => {
-    stop();
-    if (speech.isListening) {
-      speech.stopListening();
+  const submitAnswer = useCallback(async () => {
+    if (!session || isSubmitting) {
       return;
     }
 
-    speech.startListening();
-    setSubmitError(null);
-    setShowTranscript(true);
-  };
-
-  const submitAnswer = async () => {
-    if (!speech.transcript.trim() || isSubmitting) {
-      return;
-    }
+    const transcriptForEvaluation = visibleTranscript.trim();
 
     setIsSubmitting(true);
     setSubmitError(null);
-    speech.stopListening();
+    setCaptureEnabled(false);
+    setShowTranscript(false);
     stop();
 
     try {
@@ -142,9 +139,9 @@ export default function InterviewPage() {
         },
         body: JSON.stringify({
           session,
-          transcript: speech.transcript.trim(),
-          durationSeconds: speech.elapsedSeconds,
-          speechMetrics: speech.metrics,
+          transcript: transcriptForEvaluation,
+          durationSeconds: answerDurationSeconds,
+          speechMetrics,
           faceMetrics: face.metrics
         })
       });
@@ -154,44 +151,101 @@ export default function InterviewPage() {
       }
 
       const data = (await response.json()) as { session: InterviewSession; evaluation: AnswerEvaluation };
+      resetTranscript();
       setSession(data.session);
       setLatestEvaluation(data.evaluation);
       setShowCoaching(true);
-
-      if (data.session.currentQuestion) {
-        lastSpokenQuestionRef.current = data.session.currentQuestion;
-        void speak(data.session.currentQuestion);
-      }
+      setAnswerSecondsRemaining(ANSWER_SECONDS);
+      autoSubmittedRef.current = false;
 
       if (data.session.interviewComplete) {
         router.push("/results");
       }
     } catch (error) {
+      setCaptureEnabled(true);
+      setShowTranscript(true);
       setSubmitError(error instanceof Error ? error.message : "The answer could not be evaluated. Please try again.");
     } finally {
       setIsSubmitting(false);
     }
-  };
+  }, [answerDurationSeconds, face.metrics, isSubmitting, resetTranscript, router, session, setCaptureEnabled, setSession, speechMetrics, stop, visibleTranscript]);
 
-  const handlePrimaryAction = () => {
-    if (speech.isListening) {
-      speech.stopListening();
-      return;
-    }
-
-    if (speech.transcript.trim()) {
+  useEffect(() => {
+    submitAnswerRef.current = () => {
       void submitAnswer();
+    };
+  }, [submitAnswer]);
+
+  useEffect(() => {
+    if (!session?.currentQuestion || session.currentQuestion === lastSpokenQuestionRef.current) {
       return;
     }
 
-    startCandidateResponse();
-  };
+    const question = session.currentQuestion;
+    lastSpokenQuestionRef.current = question;
+    autoSubmittedRef.current = false;
+    setCaptureEnabled(false);
+    setShowTranscript(false);
+    setAnswerSecondsRemaining(ANSWER_SECONDS);
+    resetTranscript();
 
-  const primaryLabel = speech.isListening ? "Stop Answer" : speech.transcript.trim() ? "Submit Answer" : "Start Answer";
+    void (async () => {
+      try {
+        await speak(question);
+      } catch {
+        stop();
+      }
+
+      if (lastSpokenQuestionRef.current !== question) {
+        return;
+      }
+
+      resetTranscript();
+      setAnswerSecondsRemaining(ANSWER_SECONDS);
+      setCaptureEnabled(true);
+      setShowTranscript(true);
+    })();
+  }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, stop]);
+
+  useEffect(() => {
+    if (!showTranscript || isSubmitting || session?.interviewComplete) {
+      return;
+    }
+
+    if (answerSecondsRemaining <= 0) {
+      if (!autoSubmittedRef.current) {
+        autoSubmittedRef.current = true;
+        submitAnswerRef.current?.();
+      }
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setAnswerSecondsRemaining((current) => Math.max(0, current - 1));
+    }, 1000);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [answerSecondsRemaining, isSubmitting, session?.interviewComplete, showTranscript]);
+
+  if (!session) {
+    return null;
+  }
+
+  const endInterview = () => {
+    setCaptureEnabled(false);
+    stopListening();
+    stop();
+    setSession({
+      ...session,
+      interviewComplete: true
+    });
+    router.push("/results");
+  };
 
   return (
     <main className="min-h-screen bg-[#f7f9fc] text-ink">
-      <video ref={face.videoRef} autoPlay muted playsInline className="sr-only" />
 
       <header className="border-b border-slate-200/80 bg-white/90 px-5 py-4 backdrop-blur">
         <div className="mx-auto flex max-w-[118rem] flex-col gap-4 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:items-center">
@@ -255,19 +309,19 @@ export default function InterviewPage() {
           <div className="mt-10 space-y-8 border-t border-slate-200 pt-8">
             <div>
               <p className="text-sm font-semibold">Words per Min</p>
-              <p className="mt-4 text-3xl font-semibold">{speech.metrics.speakingPace}</p>
+              <p className="mt-4 text-3xl font-semibold">{speechMetrics.speakingPace}</p>
               <p className="mt-1 text-sm text-slate-500">{speakingPaceLabel}</p>
             </div>
 
             <div className="border-t border-slate-200 pt-8">
               <p className="text-sm font-semibold">Speaking time</p>
-              <p className="mt-4 text-3xl font-semibold">{formatTime(speech.elapsedSeconds)}</p>
+              <p className="mt-4 text-3xl font-semibold">{formatTime(elapsedSeconds)}</p>
               <p className="mt-1 text-sm text-slate-500">min</p>
             </div>
 
             <div className="border-t border-slate-200 pt-8">
               <p className="text-sm font-semibold">Filler Words</p>
-              <p className="mt-4 text-3xl font-semibold">{speech.metrics.fillerCount}</p>
+              <p className="mt-4 text-3xl font-semibold">{speechMetrics.fillerCount}</p>
               {repeatedFillerWords.length > 0 ? (
                 <p className="mt-1 text-sm text-slate-500">
                   {repeatedFillerWords.map((item) => `${item.word} (${item.count})`).join(", ")}
@@ -277,73 +331,121 @@ export default function InterviewPage() {
           </div>
         </aside>
 
-        <section className="space-y-6">
-          <div className="relative aspect-video overflow-hidden rounded-2xl bg-slate-950 shadow-panel">
-            <InterviewerAvatar
-              className="h-full w-full rounded-2xl border-0 shadow-none"
-              mouthLevel={mouthLevel}
-              emotion={emotion}
-              isSpeaking={isSpeaking}
-              title="AI interviewer"
-              showLabels={false}
+        <section className="space-y-5">
+          <div className="relative mx-auto aspect-video max-h-[46vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-950 shadow-panel">
+            {mainVideo === "interviewer" ? (
+              <InterviewerAvatar
+                className="h-full w-full rounded-2xl border-0 shadow-none"
+                mouthLevel={mouthLevel}
+                emotion={emotion}
+                isSpeaking={isSpeaking}
+                title="AI interviewer"
+                showLabels={false}
+              />
+            ) : null}
+
+            <video
+              ref={face.videoRef}
+              autoPlay
+              muted
+              playsInline
+              onClick={() => setMainVideo("interviewer")}
+              className={mainVideo === "candidate" ? "h-full w-full cursor-pointer object-cover" : "sr-only"}
             />
-            <button
-              type="button"
-              onClick={() => void speak(session.currentQuestion ?? "")}
-              className="absolute right-4 top-4 rounded-xl bg-white/20 px-4 py-3 text-sm font-semibold text-white backdrop-blur transition hover:bg-white/30"
-            >
-              Replay
-            </button>
-            <div className="absolute bottom-5 left-5 rounded-xl bg-black/55 px-4 py-2 text-sm font-semibold text-white backdrop-blur">
-              <span className="mr-2 inline-block h-3 w-3 rounded-full bg-teal-400 align-middle" />
-              Interviewing
-            </div>
-          </div>
 
-          <div className="rounded-2xl border border-slate-200 bg-white px-8 py-7 shadow-panel">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Interviewer question</p>
-            <p className="mt-5 min-h-16 text-2xl font-semibold leading-snug sm:text-3xl">
-              <TypingQuestion text={session.currentQuestion} />
-            </p>
+            {mainVideo === "candidate" ? (
+              <div className="absolute bottom-4 right-4 h-[34%] w-[28%] min-w-40">
+                <InterviewerAvatar
+                  compact
+                  className="h-full w-full rounded-xl border border-white/20 shadow-2xl"
+                  mouthLevel={mouthLevel}
+                  emotion={emotion}
+                  isSpeaking={isSpeaking}
+                  onClick={() => setMainVideo("interviewer")}
+                  title="AI interviewer"
+                  showLabels={false}
+                />
+              </div>
+            ) : null}
 
-            <div className="mt-8 flex flex-col items-center">
+            {mainVideo === "interviewer" ? (
               <button
                 type="button"
-                onClick={handlePrimaryAction}
-                disabled={!speech.isSupported || isSubmitting}
-                className="min-h-16 w-full max-w-sm rounded-2xl bg-teal-600 px-8 py-4 text-base font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+                onClick={() => setMainVideo("candidate")}
+                className="absolute bottom-4 right-4 grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+                aria-label="Show candidate camera"
               >
-                {isSubmitting ? "Evaluating..." : primaryLabel}
+                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M4 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                  <path d="m17 10 5-3v10l-5-3" />
+                </svg>
               </button>
-              <p className="mt-4 text-sm text-slate-500">
-                {speech.isSupported
-                  ? speech.transcript.trim()
-                    ? "Click to evaluate your answer"
-                    : "Click when you're ready to speak"
-                  : "Speech recognition is not supported in this browser."}
-              </p>
-              {submitError ? <p className="mt-3 text-sm font-medium text-red-600">{submitError}</p> : null}
+            ) : null}
+
+            {mainVideo === "candidate" ? (
+              <button
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void face.cycleCamera();
+                }}
+                className="absolute right-4 top-4 grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+                aria-label="Switch camera device"
+              >
+                <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 12a9 9 0 0 1-15.5 6.2" />
+                  <path d="M3 12A9 9 0 0 1 18.5 5.8" />
+                  <path d="M18 3v4h-4" />
+                  <path d="M6 21v-4h4" />
+                </svg>
+              </button>
+            ) : null}
+
+            <div className="absolute bottom-5 left-5 rounded-xl bg-black/55 px-4 py-2 text-sm font-semibold text-white backdrop-blur">
+              <span className="mr-2 inline-block h-3 w-3 rounded-full bg-teal-400 align-middle" />
+              {mainVideo === "interviewer" ? "Interviewing" : "Candidate camera"}
             </div>
           </div>
 
-          <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-panel">
-            <button
-              type="button"
-              onClick={() => setShowTranscript((current) => !current)}
-              className="flex w-full items-center justify-between gap-4 px-8 py-5 text-left"
-            >
-              <span className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Live transcript</span>
-              <span className="text-sm text-slate-500">
-                {currentTranscript ? "View current answer" : "Will appear here when you start speaking"} {showTranscript ? "Up" : "Down"}
-              </span>
-            </button>
+          <div className="mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-panel">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Interviewer question</p>
+                <p className="mt-4 text-xl font-bold leading-snug text-ink sm:text-2xl">
+                  <TypingQuestion text={session.currentQuestion} />
+                </p>
+              </div>
+
+              {showTranscript ? (
+                <div className="rounded-xl bg-slate-50 px-4 py-3 text-right">
+                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Time left</p>
+                  <p className="mt-1 text-2xl font-semibold">{formatTime(answerSecondsRemaining)}</p>
+                </div>
+              ) : null}
+            </div>
+
             {showTranscript ? (
-              <div className="border-t border-slate-200 bg-slate-50 px-8 py-5">
+              <div className="mt-6 border-t border-slate-200 pt-5">
                 <p className="min-h-20 whitespace-pre-wrap text-sm leading-7 text-slate-700">
-                  {currentTranscript || "Start speaking to populate the transcript in real time."}
+                  {visibleTranscript || "Your answer will appear here in real time."}
                 </p>
               </div>
             ) : null}
+
+            <div className="mt-6 flex flex-col items-center border-t border-slate-200 pt-5">
+              <button
+                type="button"
+                onClick={() => void submitAnswer()}
+                disabled={!showTranscript || isSubmitting}
+                className="min-h-12 w-full max-w-xs rounded-xl bg-teal-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300"
+              >
+                {isSubmitting ? "Evaluating..." : "Submit early"}
+              </button>
+              <p className="mt-3 text-sm text-slate-500">
+                {speechIsSupported ? "Answer timer starts when the interviewer finishes speaking." : "Speech recognition is not supported in this browser."}
+              </p>
+              {submitError ? <p className="mt-3 text-sm font-medium text-red-600">{submitError}</p> : null}
+            </div>
           </div>
         </section>
 

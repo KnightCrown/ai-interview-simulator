@@ -133,9 +133,11 @@ export function useInterviewerSpeech() {
 
       setEmotion(deriveAvatarEmotion(cleanText));
 
-      if (!speechSupported) {
+      const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
+      if (!canSpeak) {
         return;
       }
+      setSpeechSupported(true);
 
       await ensureAudioGraph();
       if (!audioContextRef.current || !meterGainRef.current) {
@@ -160,46 +162,66 @@ export function useInterviewerSpeech() {
         utterance.voice = preferredVoice;
       }
 
-      utterance.onstart = () => {
-        setIsSpeaking(true);
-        startPolling();
+      return new Promise<void>((resolve) => {
+        let hasResolved = false;
+        let fallbackTimer: number | null = null;
+        const estimatedDuration = Math.min(14000, Math.max(2600, cleanText.split(/\s+/).length * 420));
+        const finish = () => {
+          if (hasResolved) {
+            return;
+          }
 
-        boundaryIntervalRef.current = window.setInterval(() => {
+          hasResolved = true;
+          if (fallbackTimer !== null) {
+            window.clearTimeout(fallbackTimer);
+          }
+          stop();
+          resolve();
+        };
+        fallbackTimer = window.setTimeout(finish, estimatedDuration);
+
+        utterance.onstart = () => {
+          setIsSpeaking(true);
+          startPolling();
+
+          boundaryIntervalRef.current = window.setInterval(() => {
+            if (!meterGainRef.current || !audioContextRef.current) {
+              return;
+            }
+
+            const target = 0.02 + Math.random() * 0.08;
+            meterGainRef.current.gain.cancelScheduledValues(audioContextRef.current.currentTime);
+            meterGainRef.current.gain.linearRampToValueAtTime(target, audioContextRef.current.currentTime + 0.03);
+            meterGainRef.current.gain.linearRampToValueAtTime(0.01, audioContextRef.current.currentTime + 0.14);
+          }, 110);
+        };
+
+        utterance.onboundary = () => {
           if (!meterGainRef.current || !audioContextRef.current) {
             return;
           }
 
-          const target = 0.02 + Math.random() * 0.08;
+          const target = 0.04 + Math.random() * 0.09;
           meterGainRef.current.gain.cancelScheduledValues(audioContextRef.current.currentTime);
-          meterGainRef.current.gain.linearRampToValueAtTime(target, audioContextRef.current.currentTime + 0.03);
-          meterGainRef.current.gain.linearRampToValueAtTime(0.01, audioContextRef.current.currentTime + 0.14);
-        }, 110);
-      };
+          meterGainRef.current.gain.linearRampToValueAtTime(target, audioContextRef.current.currentTime + 0.02);
+          meterGainRef.current.gain.linearRampToValueAtTime(0.012, audioContextRef.current.currentTime + 0.12);
+        };
 
-      utterance.onboundary = () => {
-        if (!meterGainRef.current || !audioContextRef.current) {
-          return;
-        }
+        utterance.onend = () => {
+          finish();
+        };
 
-        const target = 0.04 + Math.random() * 0.09;
-        meterGainRef.current.gain.cancelScheduledValues(audioContextRef.current.currentTime);
-        meterGainRef.current.gain.linearRampToValueAtTime(target, audioContextRef.current.currentTime + 0.02);
-        meterGainRef.current.gain.linearRampToValueAtTime(0.012, audioContextRef.current.currentTime + 0.12);
-      };
+        utterance.onerror = () => {
+          setError("The browser voice engine could not speak this response.");
+          finish();
+        };
 
-      utterance.onend = () => {
-        stop();
-      };
-
-      utterance.onerror = () => {
-        setError("The browser voice engine could not speak this response.");
-        stop();
-      };
-
-      currentUtteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
+        currentUtteranceRef.current = utterance;
+        window.speechSynthesis.speak(utterance);
+        window.speechSynthesis.resume();
+      });
     },
-    [ensureAudioGraph, speechSupported, startPolling, stop]
+    [ensureAudioGraph, startPolling, stop]
   );
 
   useEffect(() => {
