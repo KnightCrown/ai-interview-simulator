@@ -2,12 +2,20 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { loadMediaDevicePreferences, markMediaPermissionGranted, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
 import { InterviewDifficulty, InterviewSession, ResumeMode } from "@/lib/interview-types";
 import { useInterviewSession } from "@/lib/session-store";
 
 const LANDING_JOB_ROLES = ["Software Developer", "Registered Nurse", "Financial Analyst", "Marketing Manager", "Other"];
+const PREPARATION_DURATION_MS = 5000;
+const PREPARATION_STEPS = [
+  "Selecting your interviewer",
+  "Personalizing the interview questions",
+  "Calibrating your practice room",
+  "Preparing live feedback",
+  "Opening the interview room"
+];
 
 export default function LandingPage() {
   const router = useRouter();
@@ -19,6 +27,9 @@ export default function LandingPage() {
   const [uploadedResumeName, setUploadedResumeName] = useState("");
   const [isStarting, setIsStarting] = useState(false);
   const [isCheckingMedia, setIsCheckingMedia] = useState(false);
+  const [showPreparationOverlay, setShowPreparationOverlay] = useState(false);
+  const [preparationProgress, setPreparationProgress] = useState(0);
+  const [preparationStepIndex, setPreparationStepIndex] = useState(0);
   const [startError, setStartError] = useState<string | null>(null);
   const [showDeviceDialog, setShowDeviceDialog] = useState(false);
   const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
@@ -30,6 +41,34 @@ export default function LandingPage() {
     const role = selectedRole === "Other" ? customRole : selectedRole;
     return role.trim();
   };
+
+  useEffect(() => {
+    if (!showPreparationOverlay) {
+      setPreparationProgress(0);
+      setPreparationStepIndex(0);
+      return;
+    }
+
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => {
+      const progress = Math.min(100, Math.round(((Date.now() - startedAt) / PREPARATION_DURATION_MS) * 100));
+      const stepIndex = Math.min(
+        PREPARATION_STEPS.length - 1,
+        Math.floor((progress / 100) * PREPARATION_STEPS.length)
+      );
+
+      setPreparationProgress(progress);
+      setPreparationStepIndex(stepIndex);
+
+      if (progress >= 100) {
+        window.clearInterval(timer);
+      }
+    }, 100);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [showPreparationOverlay]);
 
   const stopMediaStream = (stream: MediaStream) => {
     stream.getTracks().forEach((track) => track.stop());
@@ -144,7 +183,9 @@ export default function LandingPage() {
       return;
     }
 
+    const loadingStartedAt = Date.now();
     setIsStarting(true);
+    setShowPreparationOverlay(true);
     setStartError(null);
 
     try {
@@ -162,12 +203,18 @@ export default function LandingPage() {
       }
 
       const data = (await response.json()) as { session: InterviewSession };
+      const remainingPreparationTime = Math.max(0, PREPARATION_DURATION_MS - (Date.now() - loadingStartedAt));
+      if (remainingPreparationTime > 0) {
+        await new Promise((resolve) => window.setTimeout(resolve, remainingPreparationTime));
+      }
+
       setSession(data.session);
       router.push("/interview");
     } catch (error) {
       setStartError(error instanceof Error ? error.message : "Could not start the interview.");
     } finally {
       setIsStarting(false);
+      setShowPreparationOverlay(false);
     }
   };
 
@@ -431,6 +478,29 @@ export default function LandingPage() {
               >
                 {isStarting ? "Preparing..." : "Use these devices"}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showPreparationOverlay ? (
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-ink/55 px-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl bg-white p-7 shadow-panel">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700">Preparing interview</p>
+            <h2 className="mt-4 text-2xl font-semibold text-ink">{PREPARATION_STEPS[preparationStepIndex]}</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              Your interview environment is being generated in the background.
+            </p>
+
+            <div className="mt-7 h-3 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-teal-600 transition-[width] duration-150 ease-out"
+                style={{ width: `${preparationProgress}%` }}
+              />
+            </div>
+            <div className="mt-3 flex items-center justify-between text-xs font-semibold text-slate-500">
+              <span>{preparationProgress}%</span>
+              <span>{preparationStepIndex + 1} of {PREPARATION_STEPS.length}</span>
             </div>
           </div>
         </div>

@@ -29,6 +29,7 @@ import {
   updateMemory
 } from "@/lib/interview-scoring";
 import { getRoleExpectations } from "@/lib/sample-data";
+import { isTranscriptSubstantive } from "@/lib/transcript-utils";
 
 function buildInterviewerReaction(input: {
   role: JobRole;
@@ -61,6 +62,12 @@ export function buildFallbackQuestion(
   const stage = options.targetTurnIndex ?? turns.length;
   const previousAnswer = options.pendingAnswer?.trim() || turns.at(-1)?.transcript || "";
   const previousWeakArea = memory.weakAreas[0];
+  const isFollowUpQuestion = stage === 1 || stage === 3;
+
+  if (isFollowUpQuestion && !isTranscriptSubstantive(previousAnswer)) {
+    return `I still need a real answer to what I asked—you haven't spoken to it yet. Let me ask again directly: give me one concrete ${role} example where you owned the outcome, what constraint you faced, and what measurably changed. I am listening for specifics, not a headline.`;
+  }
+
   const roleSignals = getRoleExpectations(role).join(", ");
   const difficultyDirections = {
     Easy: {
@@ -87,8 +94,6 @@ export function buildFallbackQuestion(
   };
 
   const prompt = prompts[stage] ?? prompts[4];
-
-  const isFollowUpQuestion = stage === 1 || stage === 3;
 
   if (stage === 0 || !isFollowUpQuestion) {
     return prompt;
@@ -166,6 +171,50 @@ export function buildFallbackEvaluation(input: {
     rewriteHighlights: buildRewriteHighlights(transcript, improvedAnswer),
     interviewerReaction,
     perceivedTone,
+    pressureLabel: derivePressureLabel(liveConfidence)
+  };
+}
+
+function buildEmptyAnswerEvaluation(input: {
+  role: JobRole;
+  transcript: string;
+  speechMetrics: SpeechMetrics;
+  faceMetrics: InterviewTurn["faceMetrics"];
+  resume: ResumeProfile | null;
+  strictness?: number;
+  previousWeakAreas?: string[];
+}): AnswerEvaluation {
+  const { role, transcript, speechMetrics, faceMetrics, resume } = input;
+  const clarity = 5;
+  const relevance = 4;
+  const structure = 5;
+  const confidence = 6;
+  const engagement = clampScore(faceMetrics.engagementScore * 0.2 - speechMetrics.fillerCount * 3, 1, 22);
+  const liveConfidence = 8;
+  const missingResumeHighlights = inferMissingHighlights(transcript, resume);
+  const missedOpportunityDetails = buildMissedOpportunityDetails(role, transcript, resume);
+  const missedOpportunity =
+    missedOpportunityDetails[0]?.exactThing ??
+    "There was no answer content to evaluate—this costs credibility fast in a real loop.";
+  const improvedAnswer = buildImprovedAnswer(role, resume, missingResumeHighlights, transcript || " ");
+
+  return {
+    clarity,
+    relevance,
+    structure,
+    confidence,
+    engagement,
+    liveConfidence,
+    feedback:
+      "No substantive answer was captured—you submitted without addressing the question. In a real interview that reads as disengagement or lack of preparation. Speak out loud with at least one concrete example next time.",
+    missedOpportunity,
+    missingResumeHighlights,
+    missedOpportunityDetails,
+    improvedAnswer,
+    rewriteHighlights: buildRewriteHighlights(transcript, improvedAnswer),
+    interviewerReaction:
+      "I'm concerned—they didn't answer my question at all. That signals they're either unprepared or not taking this seriously, and I can't move forward without substance. I need them to engage directly or this process doesn't work.",
+    perceivedTone: "Disengaged / non-responsive",
     pressureLabel: derivePressureLabel(liveConfidence)
   };
 }
@@ -251,9 +300,17 @@ export function buildFallbackFinalReport(session: InterviewSession): FinalReport
   };
 }
 
+let missingOpenAiKeyLogged = false;
+
 function getClient() {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
+    if (process.env.NODE_ENV === "development" && !missingOpenAiKeyLogged) {
+      missingOpenAiKeyLogged = true;
+      console.warn(
+        "[interview-engine] OPENAI_API_KEY is missing or empty — LLM questions and grading fall back to built-in templates. Add OPENAI_API_KEY to .env.local."
+      );
+    }
     return null;
   }
 
@@ -266,12 +323,18 @@ async function generateWithOpenAI(prompt: string) {
     return null;
   }
 
-  const response = await client.responses.create({
-    model: "gpt-4.1-mini",
-    input: prompt
-  });
+  try {
+    const response = await client.responses.create({
+      model: "gpt-4.1-mini",
+      input: prompt
+    });
 
-  return response.output_text;
+    const text = response.output_text?.trim();
+    return text || null;
+  } catch (error) {
+    console.error("[interview-engine] OpenAI request failed:", error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 function parseJsonObject<T>(content: string): Partial<T> | null {
@@ -401,6 +464,8 @@ export function normalizeFinalReport(parsed: Partial<FinalReport>, fallback: Fin
 function buildSequentialQuestionInstructions(session: InterviewSession, targetTurnIndex: number) {
   const { role, turns } = session;
   const isFollowUpQuestion = targetTurnIndex === 1 || targetTurnIndex === 3;
+  const lastAnswer = turns.at(-1)?.transcript?.trim() ?? "";
+  const lastAnswerEmpty = !isTranscriptSubstantive(lastAnswer);
 
   if (targetTurnIndex === 0) {
     return `SEQUENTIAL QUESTION RULES — Question 1 only:
@@ -409,17 +474,30 @@ function buildSequentialQuestionInstructions(session: InterviewSession, targetTu
 - Do not pretend the candidate already spoke.`;
   }
 
+  if (isFollowUpQuestion && lastAnswerEmpty) {
+    return `SEQUENTIAL QUESTION RULES — Question ${targetTurnIndex + 1}:
+- The candidate did NOT provide a substantive answer to your previous question (blank, silence, or empty submission).
+- Your question MUST open by stating clearly that they have not answered what you asked (firm but professional—no sarcasm).
+- Briefly restate or paraphrase the core of your prior question, then ask it again in fresh wording.
+- Insist on a concrete, spoken answer with specifics relevant to ${JSON.stringify(role)}. Do not invent substance from their prior "answer"—there was none to build on.
+- Do not greet, thank, or use pleasantries.`;
+  }
+
   if (!isFollowUpQuestion) {
+    const emptyPriorNote = lastAnswerEmpty
+      ? `
+- The candidate's immediately prior answer was missing or non-substantive. Acknowledge that briefly if appropriate, but move forward with a new competency—do not pretend they answered well.
+`
+      : "";
+
     return `SEQUENTIAL QUESTION RULES — Question ${targetTurnIndex + 1}:
 - This question should be a fresh, standalone question (not a direct follow-up).
 - Keep it role-specific and resume-aware, but do NOT anchor it to the immediately previous answer as a direct follow-up.
 - You MUST still use prior interview context (earlier questions, answers, and feedback) to avoid repeating what has already been covered.
 - Introduce a new angle or competency that has not been adequately tested yet, similar to how a real interviewer broadens coverage across the interview.
 - If a competency has already been explored deeply, move to another relevant area instead of re-asking the same thing.
-- Do not greet/reintroduce yourself or use filler openers.`;
+- Do not greet/reintroduce yourself or use filler openers.${emptyPriorNote}`;
   }
-
-  const lastAnswer = turns[turns.length - 1]?.transcript?.trim() ?? "";
 
   return `SEQUENTIAL QUESTION RULES — Question ${targetTurnIndex + 1}:
 - This question must be a direct follow-up to what the candidate just said.
@@ -510,6 +588,18 @@ export async function evaluateAnswer(input: {
   previousTurns: InterviewTurn[];
   memory: InterviewSession["memory"];
 }) {
+  if (!isTranscriptSubstantive(input.transcript)) {
+    return buildEmptyAnswerEvaluation({
+      role: input.role,
+      transcript: input.transcript,
+      speechMetrics: input.speechMetrics,
+      faceMetrics: input.faceMetrics,
+      resume: input.resume,
+      strictness: input.memory.strictness,
+      previousWeakAreas: input.memory.weakAreas
+    });
+  }
+
   const fallback = buildFallbackEvaluation({
     role: input.role,
     transcript: input.transcript,
@@ -588,13 +678,20 @@ Session: ${JSON.stringify(session)}
   }
 }
 
-export function buildSession(role: JobRole, difficulty: InterviewSession["difficulty"], resumeMode: "Use Sample Resume" | "Skip Resume", resume: ResumeProfile | null): InterviewSession {
+export function buildSession(
+  role: JobRole,
+  difficulty: InterviewSession["difficulty"],
+  resumeMode: "Use Sample Resume" | "Skip Resume",
+  resume: ResumeProfile | null,
+  elevenLabsVoiceId?: string | null
+): InterviewSession {
   return {
     id: crypto.randomUUID(),
     role,
     difficulty,
     resumeMode,
     resume,
+    elevenLabsVoiceId: elevenLabsVoiceId ?? null,
     startedAt: new Date().toISOString(),
     turns: [],
     currentQuestion: null,

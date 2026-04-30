@@ -96,6 +96,8 @@ export interface InterviewSession {
   difficulty: InterviewDifficulty;
   resumeMode: ResumeMode;
   resume: ResumeProfile | null;
+  /** ElevenLabs voice id for TTS; set when the session starts. Missing on legacy sessions. */
+  elevenLabsVoiceId?: string | null;
   startedAt: string;
   turns: InterviewTurn[];
   currentQuestion: string | null;

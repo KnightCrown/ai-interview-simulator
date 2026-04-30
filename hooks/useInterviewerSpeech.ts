@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AvatarEmotion, deriveAvatarEmotion, estimateSpeechDurationMs, supportsWebGl } from "@/lib/avatar-utils";
+import type { InterviewDifficulty } from "@/lib/interview-types";
 
 // Hard cap on total time we will wait for a single utterance before giving up,
 // in case the browser leaves `speechSynthesis.speaking` stuck on `true`.
@@ -13,7 +14,7 @@ function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function useInterviewerSpeech() {
+export function useInterviewerSpeech(elevenLabsVoiceId?: string | null, difficulty?: InterviewDifficulty | null) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [mouthLevel, setMouthLevel] = useState(0);
   const [emotion, setEmotion] = useState<AvatarEmotion>("neutral");
@@ -28,6 +29,8 @@ export function useInterviewerSpeech() {
   const pollRef = useRef<number | null>(null);
   const boundaryIntervalRef = useRef<number | null>(null);
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const playbackAudioRef = useRef<HTMLAudioElement | null>(null);
+  const playbackObjectUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     setSpeechSupported(typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window);
@@ -77,6 +80,18 @@ export function useInterviewerSpeech() {
     setMouthLevel(0);
   }, []);
 
+  const stopPlaybackAudio = useCallback(() => {
+    if (playbackAudioRef.current) {
+      playbackAudioRef.current.pause();
+      playbackAudioRef.current = null;
+    }
+
+    if (playbackObjectUrlRef.current) {
+      URL.revokeObjectURL(playbackObjectUrlRef.current);
+      playbackObjectUrlRef.current = null;
+    }
+  }, []);
+
   const ensureAudioGraph = useCallback(async () => {
     if (audioContextRef.current && analyserRef.current && meterGainRef.current && oscillatorRef.current) {
       if (audioContextRef.current.state === "suspended") {
@@ -120,6 +135,7 @@ export function useInterviewerSpeech() {
     window.speechSynthesis.cancel();
     clearBoundaryInterval();
     stopPolling();
+    stopPlaybackAudio();
 
     if (meterGainRef.current && audioContextRef.current) {
       meterGainRef.current.gain.cancelScheduledValues(audioContextRef.current.currentTime);
@@ -128,7 +144,113 @@ export function useInterviewerSpeech() {
 
     currentUtteranceRef.current = null;
     setIsSpeaking(false);
-  }, [stopPolling]);
+  }, [stopPlaybackAudio, stopPolling]);
+
+  const runSyntheticMouthAnimationLoop = useCallback(() => {
+    boundaryIntervalRef.current = window.setInterval(() => {
+      if (!meterGainRef.current || !audioContextRef.current) {
+        return;
+      }
+
+      const target = 0.02 + Math.random() * 0.08;
+      meterGainRef.current.gain.cancelScheduledValues(audioContextRef.current.currentTime);
+      meterGainRef.current.gain.linearRampToValueAtTime(target, audioContextRef.current.currentTime + 0.03);
+      meterGainRef.current.gain.linearRampToValueAtTime(0.01, audioContextRef.current.currentTime + 0.14);
+    }, 110);
+  }, []);
+
+  const speakWithElevenLabs = useCallback(
+    async (cleanText: string, voiceId: string): Promise<boolean> => {
+      try {
+        const res = await fetch("/api/interview/tts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: cleanText, voiceId, difficulty: difficulty ?? undefined })
+        });
+
+        if (!res.ok) {
+          return false;
+        }
+
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const audio = new Audio();
+        audio.src = objectUrl;
+        playbackAudioRef.current = audio;
+        playbackObjectUrlRef.current = objectUrl;
+
+        await ensureAudioGraph();
+        if (!audioContextRef.current || !meterGainRef.current) {
+          stopPlaybackAudio();
+          return false;
+        }
+
+        return await new Promise<boolean>((resolve) => {
+          let hasResolved = false;
+          let fallbackTimer: number | null = null;
+          const startTimestamp = Date.now();
+          const estimatedDuration = estimateSpeechDurationMs(cleanText);
+
+          const finish = (wantBrowserFallback: boolean) => {
+            if (hasResolved) {
+              return;
+            }
+
+            hasResolved = true;
+            if (fallbackTimer !== null) {
+              window.clearTimeout(fallbackTimer);
+              fallbackTimer = null;
+            }
+            stop();
+            resolve(!wantBrowserFallback);
+          };
+
+          const scheduleFallback = (delay: number) => {
+            if (fallbackTimer !== null) {
+              window.clearTimeout(fallbackTimer);
+            }
+            fallbackTimer = window.setTimeout(() => {
+              const stillPlaying =
+                playbackAudioRef.current !== null && !playbackAudioRef.current.paused && !playbackAudioRef.current.ended;
+              const elapsed = Date.now() - startTimestamp;
+
+              if (stillPlaying && elapsed < ABSOLUTE_MAX_SPEECH_MS) {
+                scheduleFallback(FALLBACK_RECHECK_MS);
+                return;
+              }
+
+              finish(false);
+            }, delay);
+          };
+
+          scheduleFallback(estimatedDuration);
+
+          audio.onplay = () => {
+            setIsSpeaking(true);
+            startPolling();
+            runSyntheticMouthAnimationLoop();
+          };
+
+          audio.onended = () => {
+            finish(false);
+          };
+
+          audio.onerror = () => {
+            setError("The voice playback failed.");
+            finish(true);
+          };
+
+          void audio.play().catch(() => {
+            finish(true);
+          });
+        });
+      } catch {
+        stopPlaybackAudio();
+        return false;
+      }
+    },
+    [difficulty, ensureAudioGraph, runSyntheticMouthAnimationLoop, startPolling, stop, stopPlaybackAudio]
+  );
 
   const speak = useCallback(
     async (text: string) => {
@@ -138,6 +260,18 @@ export function useInterviewerSpeech() {
       }
 
       setEmotion(deriveAvatarEmotion(cleanText));
+      stop();
+      setError(null);
+
+      const voiceId = elevenLabsVoiceId?.trim();
+      if (voiceId) {
+        const elevenOk = await speakWithElevenLabs(cleanText, voiceId);
+        if (elevenOk) {
+          setSpeechSupported(true);
+          return;
+        }
+        setError(null);
+      }
 
       const canSpeak = typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window;
       if (!canSpeak) {
@@ -149,9 +283,6 @@ export function useInterviewerSpeech() {
       if (!audioContextRef.current || !meterGainRef.current) {
         return;
       }
-
-      stop();
-      setError(null);
 
       const utterance = new SpeechSynthesisUtterance(cleanText);
       utterance.rate = 1;
@@ -193,13 +324,8 @@ export function useInterviewerSpeech() {
             window.clearTimeout(fallbackTimer);
           }
           fallbackTimer = window.setTimeout(() => {
-            // If the browser is still actively speaking, do NOT cancel; just
-            // recheck shortly. This prevents the question from being cut off
-            // when the actual TTS playback runs longer than our estimate.
             const stillSpeaking =
-              typeof window !== "undefined" &&
-              "speechSynthesis" in window &&
-              window.speechSynthesis.speaking;
+              typeof window !== "undefined" && "speechSynthesis" in window && window.speechSynthesis.speaking;
             const elapsed = Date.now() - startTimestamp;
 
             if (stillSpeaking && elapsed < ABSOLUTE_MAX_SPEECH_MS) {
@@ -254,7 +380,7 @@ export function useInterviewerSpeech() {
         window.speechSynthesis.resume();
       });
     },
-    [ensureAudioGraph, startPolling, stop]
+    [difficulty, elevenLabsVoiceId, ensureAudioGraph, runSyntheticMouthAnimationLoop, speakWithElevenLabs, startPolling, stop]
   );
 
   useEffect(() => {

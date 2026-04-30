@@ -9,6 +9,7 @@ import { AnswerEvaluation, CandidateMoodSnapshot, InterviewSession, InterviewTur
 import { liveConfidenceFromSignals, pickDominantEmotion } from "@/lib/interview-scoring";
 import { useFaceTracking } from "@/hooks/useFaceTracking";
 import { useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
+import { useSmoothedLiveMetric } from "@/hooks/useSmoothedLiveMetric";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
 import { useInterviewSession } from "@/lib/session-store";
@@ -64,7 +65,7 @@ export default function InterviewPage() {
     () => loadMediaDevicePreferences()?.videoInputId ?? null
   );
   const face = useFaceTracking(preferredVideoDeviceId);
-  const interviewerSpeech = useInterviewerSpeech();
+  const interviewerSpeech = useInterviewerSpeech(session?.elevenLabsVoiceId, session?.difficulty);
   const {
     elapsedSeconds,
     interimTranscript,
@@ -160,7 +161,7 @@ export default function InterviewPage() {
   const currentQuestionNumber = session ? Math.min(session.turns.length + pendingAnswerCount + 1, TOTAL_QUESTIONS) : 1;
   const answerDurationSeconds = Math.max(1, ANSWER_SECONDS - answerSecondsRemaining);
 
-  const liveConfidence = useMemo(() => {
+  const liveConfidenceRaw = useMemo(() => {
     if (!session) {
       return 50;
     }
@@ -172,6 +173,9 @@ export default function InterviewPage() {
       faceMetrics: face.metrics
     });
   }, [face.metrics, session, speechMetrics, visibleTranscript]);
+
+  const displayedConfidence = useSmoothedLiveMetric(liveConfidenceRaw, { sampleMs: 2000, animateMs: 1100 });
+  const displayedEyeContact = useSmoothedLiveMetric(face.metrics.eyeContact, { sampleMs: 1000, animateMs: 650 });
 
   useEffect(() => {
     if (!session || !speechIsSupported) {
@@ -485,17 +489,17 @@ export default function InterviewPage() {
             <p className="text-sm font-semibold">Confidence</p>
             <div className="mt-6 flex items-center gap-5">
               <div
-                className="grid h-24 w-24 shrink-0 place-items-center rounded-full"
-                style={{ background: `conic-gradient(#14a38b ${liveConfidence * 3.6}deg, #eef2f7 0deg)` }}
+                className="grid h-24 w-24 shrink-0 place-items-center rounded-full transition-[background] duration-300 ease-out"
+                style={{ background: `conic-gradient(#14a38b ${displayedConfidence * 3.6}deg, #eef2f7 0deg)` }}
               >
                 <div className="h-16 w-16 rounded-full bg-white" />
               </div>
               <div>
-                <p className="text-4xl font-semibold">{liveConfidence}<span className="text-base font-medium text-slate-400"> /100</span></p>
-                <p className="mt-2 text-sm font-semibold text-teal-600">{liveConfidence >= 70 ? "Strong" : liveConfidence >= 55 ? "Good" : "Warming up"}</p>
+                <p className="text-4xl font-semibold">{displayedConfidence}<span className="text-base font-medium text-slate-400"> /100</span></p>
+                <p className="mt-2 text-sm font-semibold text-teal-600">{displayedConfidence >= 70 ? "Strong" : displayedConfidence >= 55 ? "Good" : "Warming up"}</p>
               </div>
             </div>
-            <p className="mt-7 text-sm text-slate-500">Eye Contact: {face.metrics.eyeContact}</p>
+            <p className="mt-7 text-sm text-slate-500">Eye Contact: {displayedEyeContact}</p>
             <p className="mt-2 text-sm font-medium text-slate-600 capitalize" aria-live="polite">
               {face.metrics.emotion.dominant}
             </p>

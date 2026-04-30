@@ -66,10 +66,48 @@ describe("buildFallbackQuestion", () => {
   });
 
   it("can prepare a later fallback question without waiting for previous turns", () => {
-    const session = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const session = {
+      ...base,
+      turns: [
+        {
+          id: "t1",
+          question: "Q1",
+          transcript: "I led the API redesign and cut error rates substantially.",
+          durationSeconds: 10,
+          speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
+          faceMetrics: sampleFace(),
+          evaluation: {
+            clarity: 70,
+            relevance: 70,
+            structure: 70,
+            confidence: 70,
+            engagement: 70,
+            liveConfidence: 70,
+            feedback: "",
+            missedOpportunity: "",
+            missingResumeHighlights: [],
+            missedOpportunityDetails: [],
+            improvedAnswer: "",
+            rewriteHighlights: [],
+            interviewerReaction: "",
+            perceivedTone: "",
+            pressureLabel: ""
+          }
+        }
+      ]
+    };
     const question = buildFallbackQuestion(session, { targetTurnIndex: 1 });
 
     expect(question).toContain("tradeoff");
+  });
+
+  it("uses a re-ask fallback when the prior answer was empty on a follow-up stage", () => {
+    const session = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 1 });
+
+    expect(question).toContain("haven't spoken");
+    expect(question).toContain("Software Engineer");
   });
 
   it("question 4 fallback weaves in feedback from the prior evaluated answer", () => {
