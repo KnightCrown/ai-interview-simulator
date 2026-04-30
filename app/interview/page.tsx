@@ -19,7 +19,7 @@ import { transformScheduleForEmptyAnswer, getReaskedSlotIndices } from "@/lib/in
 import { buildReaskQuestion, pickRandomReaction } from "@/lib/empty-answer-responses";
 import { isTranscriptSubstantive } from "@/lib/transcript-utils";
 import { useFaceTracking } from "@/hooks/useFaceTracking";
-import { InterviewerSpeechEngine, useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
+import { useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
 import { useSmoothedLiveMetric } from "@/hooks/useSmoothedLiveMetric";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { createEmptyMoodCounts, getDominantMoodFromCounts } from "@/lib/candidate-mood";
@@ -28,7 +28,7 @@ import { useInterviewSession } from "@/lib/session-store";
 
 const BASE_TOTAL_QUESTIONS = 5;
 const ANSWER_SECONDS = 60;
-const QUESTION_HANDOFF_DELAY_MS = 500;
+const QUESTION_HANDOFF_DELAY_MS = 700;
 const CANDIDATE_MOOD_SAMPLE_MS = 2000;
 
 type MainVideo = "interviewer" | "candidate";
@@ -104,9 +104,8 @@ export default function InterviewPage() {
   const [preferredVideoDeviceId, setPreferredVideoDeviceId] = useState<string | null>(
     () => loadMediaDevicePreferences()?.videoInputId ?? null
   );
-  const [speechEngine, setSpeechEngine] = useState<InterviewerSpeechEngine>("elevenlabs");
   const face = useFaceTracking(preferredVideoDeviceId);
-  const interviewerSpeech = useInterviewerSpeech(session?.elevenLabsVoiceId, session?.difficulty, speechEngine);
+  const interviewerSpeech = useInterviewerSpeech(session?.elevenLabsVoiceId, session?.difficulty);
   const {
     elapsedSeconds,
     interimTranscript,
@@ -125,10 +124,16 @@ export default function InterviewPage() {
   const [coachingThoughts, setCoachingThoughts] = useState<CoachingThought[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCoaching, setShowCoaching] = useState(false);
+  const [showOverlay, setShowOverlay] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [mainVideo, setMainVideo] = useState<MainVideo>("interviewer");
   const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
+  const [micMenuOpen, setMicMenuOpen] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState<string>(
+    () => loadMediaDevicePreferences()?.audioInputId ?? ""
+  );
   const [pendingAnswerCount, setPendingAnswerCount] = useState(0);
   const [answerSecondsRemaining, setAnswerSecondsRemaining] = useState(ANSWER_SECONDS);
   const sessionRef = useRef<InterviewSession | null>(null);
@@ -171,8 +176,16 @@ export default function InterviewPage() {
   useEffect(() => {
     if (mainVideo !== "candidate") {
       setCameraMenuOpen(false);
+      setMicMenuOpen(false);
     }
   }, [mainVideo]);
+
+  useEffect(() => {
+    navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => setAudioDevices(devices.filter((d) => d.kind === "audioinput")))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     latestAvatarEmotionRef.current = emotion;
@@ -589,9 +602,7 @@ export default function InterviewPage() {
     void (async () => {
       if (shouldDelayNextQuestionRef.current) {
         shouldDelayNextQuestionRef.current = false;
-        if (speechEngine === "tts") {
-          await new Promise((resolve) => window.setTimeout(resolve, QUESTION_HANDOFF_DELAY_MS));
-        }
+        await new Promise((resolve) => window.setTimeout(resolve, QUESTION_HANDOFF_DELAY_MS));
 
         if (lastSpokenQuestionRef.current !== question) {
           return;
@@ -613,7 +624,7 @@ export default function InterviewPage() {
       setCaptureEnabled(true);
       setShowTranscript(true);
     })();
-  }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, speechEngine, stop, stopListening]);
+  }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, stop, stopListening]);
 
   useEffect(() => {
     if (!showTranscript || session?.interviewComplete) {
@@ -639,10 +650,6 @@ export default function InterviewPage() {
 
   const dismissCoachingThought = useCallback((id: string) => {
     setCoachingThoughts((current) => current.filter((item) => item.id !== id));
-  }, []);
-
-  const toggleSpeechEngine = useCallback(() => {
-    setSpeechEngine((current) => (current === "elevenlabs" ? "tts" : "elevenlabs"));
   }, []);
 
   if (!session) {
@@ -705,9 +712,9 @@ export default function InterviewPage() {
         <aside className="rounded-2xl border border-slate-200 bg-white p-6 shadow-panel lg:sticky lg:top-8 lg:h-[calc(100vh-7rem)] lg:overflow-y-auto">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Live insights</p>
 
-          <div className="mt-10">
+          <div className="mt-5">
             <p className="text-sm font-semibold">Confidence</p>
-            <div className="mt-6 flex items-center gap-5">
+            <div className="mt-3 flex items-center gap-5">
               <div
                 className="grid h-24 w-24 shrink-0 place-items-center rounded-full transition-[background] duration-300 ease-out"
                 style={{ background: `conic-gradient(${getConfidenceColor(displayedConfidence)} ${displayedConfidence * 3.6}deg, #eef2f7 0deg)` }}
@@ -721,7 +728,20 @@ export default function InterviewPage() {
                 </p>
               </div>
             </div>
-            <p className="mt-7 text-sm text-slate-500">Eye Contact: {displayedEyeContact}</p>
+            <button
+              type="button"
+              onClick={() => setShowOverlay((current) => !current)}
+              aria-pressed={showOverlay}
+              className={`mt-5 w-full rounded-xl border px-4 py-2 text-sm font-semibold transition ${
+                showOverlay
+                  ? "border-teal-300 bg-teal-50 text-teal-700"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-teal-200 hover:text-teal-700"
+              }`}
+            >
+              {showOverlay ? "Overlay on" : "Overlay"}
+            </button>
+
+            <p className="mt-5 text-sm text-slate-500">Eye Contact: {displayedEyeContact}</p>
 
             <div className="mt-4 space-y-2" aria-live="polite" aria-label="Facial expression breakdown">
               {(
@@ -752,22 +772,22 @@ export default function InterviewPage() {
             </div>
           </div>
 
-          <div className="mt-10 space-y-8 border-t border-slate-200 pt-8">
+          <div className="mt-5 space-y-4 border-t border-slate-200 pt-5">
             <div>
               <p className="text-sm font-semibold">Words per Min</p>
-              <p className="mt-4 text-3xl font-semibold">{speechMetrics.speakingPace}</p>
-              <p className="mt-1 text-sm text-slate-500">{speakingPaceLabel}</p>
+              <p className="mt-1.5 text-3xl font-semibold">{speechMetrics.speakingPace}</p>
+              <p className="mt-0.5 text-sm text-slate-500">{speakingPaceLabel}</p>
             </div>
 
-            <div className="border-t border-slate-200 pt-8">
+            <div className="border-t border-slate-200 pt-4">
               <p className="text-sm font-semibold">Speaking time</p>
-              <p className="mt-4 text-3xl font-semibold">{formatTime(elapsedSeconds)}</p>
-              <p className="mt-1 text-sm text-slate-500">min</p>
+              <p className="mt-1.5 text-3xl font-semibold">{formatTime(elapsedSeconds)}</p>
+              <p className="mt-0.5 text-sm text-slate-500">min</p>
             </div>
 
-            <div className="border-t border-slate-200 pt-8">
+            <div className="border-t border-slate-200 pt-4">
               <p className="text-sm font-semibold">Filler Words</p>
-              <p className="mt-4 text-3xl font-semibold">{speechMetrics.fillerCount}</p>
+              <p className="mt-1.5 text-3xl font-semibold">{speechMetrics.fillerCount}</p>
               {repeatedFillerWords.length > 0 ? (
                 <p className="mt-1 text-sm text-slate-500">
                   {repeatedFillerWords.map((item) => `${item.word} (${item.count})`).join(", ")}
@@ -830,57 +850,130 @@ export default function InterviewPage() {
             ) : null}
 
             {mainVideo === "candidate" ? (
-              <div className="absolute right-4 top-4">
-                <button
-                  type="button"
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    setCameraMenuOpen((current) => !current);
-                  }}
-                  className="grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
-                  aria-expanded={cameraMenuOpen}
-                  aria-label="Choose camera device"
-                >
-                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M4 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                    <path d="m17 10 5-3v10l-5-3" />
-                    <path d="M7 12h6" />
-                    <path d="M10 9v6" />
-                  </svg>
-                </button>
-
-                {cameraMenuOpen ? (
-                  <div
-                    className="mt-2 w-64 overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur"
-                    onClick={(event) => event.stopPropagation()}
+              <div
+                className="absolute right-4 top-4 z-20 flex items-start gap-2"
+                onClick={(event) => event.stopPropagation()}
+              >
+                {/* ── Mic selector ── */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => { setMicMenuOpen((current) => !current); setCameraMenuOpen(false); }}
+                    className="grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+                    aria-expanded={micMenuOpen}
+                    aria-label="Choose microphone"
                   >
-                    {face.videoDevices.length > 0 ? (
-                      face.videoDevices.map((device, index) => (
-                        <button
-                          key={device.deviceId || index}
-                          type="button"
-                          onClick={() => {
-                            void face.selectCamera(index);
-                            saveMediaDevicePreferences({
-                              audioInputId: loadMediaDevicePreferences()?.audioInputId ?? "",
-                              videoInputId: device.deviceId,
-                              mediaPermissionGranted: true
-                            });
-                            setPreferredVideoDeviceId(device.deviceId);
-                            setCameraMenuOpen(false);
-                          }}
-                          className={`block w-full rounded-lg px-3 py-2 text-left transition hover:bg-white/15 ${
-                            index === face.selectedDeviceIndex ? "bg-white/20 font-semibold" : ""
-                          }`}
-                        >
-                          {device.label || `Camera ${index + 1}`}
-                        </button>
-                      ))
-                    ) : (
-                      <p className="px-3 py-2 text-slate-300">No camera devices found</p>
-                    )}
-                  </div>
-                ) : null}
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                      <line x1="12" y1="19" x2="12" y2="22" />
+                      <line x1="8" y1="22" x2="16" y2="22" />
+                    </svg>
+                  </button>
+
+                  {micMenuOpen ? (
+                    <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
+                      {audioDevices.length > 0 ? (
+                        audioDevices.map((device, index) => (
+                          <button
+                            key={device.deviceId || index}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAudioDeviceId(device.deviceId);
+                              saveMediaDevicePreferences({
+                                audioInputId: device.deviceId,
+                                videoInputId: loadMediaDevicePreferences()?.videoInputId ?? "",
+                                mediaPermissionGranted: true
+                              });
+                              setMicMenuOpen(false);
+                            }}
+                            className={`block w-full rounded-lg px-3 py-2 text-left transition hover:bg-white/15 ${
+                              device.deviceId === selectedAudioDeviceId ? "bg-white/20 font-semibold" : ""
+                            }`}
+                          >
+                            {device.label || `Microphone ${index + 1}`}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-2 text-slate-300">No microphones found</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+                {/* ── Camera selector ── */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => { setCameraMenuOpen((current) => !current); setMicMenuOpen(false); }}
+                    className="grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+                    aria-expanded={cameraMenuOpen}
+                    aria-label="Choose camera device"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                      <path d="m17 10 5-3v10l-5-3" />
+                      <path d="M7 12h6" />
+                      <path d="M10 9v6" />
+                    </svg>
+                  </button>
+
+                  {cameraMenuOpen ? (
+                    <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
+                      {face.videoDevices.length > 0 ? (
+                        face.videoDevices.map((device, index) => (
+                          <button
+                            key={device.deviceId || index}
+                            type="button"
+                            onClick={() => {
+                              void face.selectCamera(index);
+                              saveMediaDevicePreferences({
+                                audioInputId: loadMediaDevicePreferences()?.audioInputId ?? "",
+                                videoInputId: device.deviceId,
+                                mediaPermissionGranted: true
+                              });
+                              setPreferredVideoDeviceId(device.deviceId);
+                              setCameraMenuOpen(false);
+                            }}
+                            className={`block w-full rounded-lg px-3 py-2 text-left transition hover:bg-white/15 ${
+                              index === face.selectedDeviceIndex ? "bg-white/20 font-semibold" : ""
+                            }`}
+                          >
+                            {device.label || `Camera ${index + 1}`}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-2 text-slate-300">No camera devices found</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {showOverlay ? (
+              <div className={`pointer-events-none absolute top-4 z-10 flex flex-col gap-2 ${
+                mainVideo === "candidate" ? "left-4 items-start" : "right-4 items-end"
+              }`}>
+                <div className="rounded-xl bg-black/60 px-3 py-2 backdrop-blur">
+                  <span
+                    className="text-3xl font-bold tabular-nums leading-none"
+                    style={{ color: getConfidenceColor(displayedConfidence) }}
+                  >
+                    {displayedConfidence}
+                  </span>
+                </div>
+                <div className="rounded-xl bg-black/60 px-3 py-1.5 backdrop-blur">
+                  <span className="text-base font-semibold tabular-nums text-white leading-none">
+                    {speechMetrics.speakingPace}
+                    <span className="ml-1 text-xs font-medium text-white/60">WPM</span>
+                  </span>
+                </div>
+                <div className="rounded-xl bg-black/60 px-3 py-1.5 backdrop-blur">
+                  <span className="text-sm font-semibold capitalize text-white/90 leading-none">
+                    {displayedCandidateMood}
+                  </span>
+                </div>
               </div>
             ) : null}
 
@@ -914,14 +1007,6 @@ export default function InterviewPage() {
             <div className="mt-4 flex flex-col items-end">
               {submitError ? <p className="mb-3 text-sm font-medium text-red-600">{submitError}</p> : null}
               <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
-                <button
-                  type="button"
-                  onClick={toggleSpeechEngine}
-                  aria-pressed={speechEngine === "elevenlabs"}
-                  className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-teal-200 hover:text-teal-700"
-                >
-                  Voice: {speechEngine === "elevenlabs" ? "ElevenLabs" : "TTS"}
-                </button>
                 <button
                   type="button"
                   onClick={() => void submitAnswer()}

@@ -183,10 +183,16 @@ export default function LandingPage() {
       return;
     }
 
-    const loadingStartedAt = Date.now();
     setIsStarting(true);
     setShowPreparationOverlay(true);
     setStartError(null);
+
+    // Start the minimum display timer immediately so it runs in parallel with the API call.
+    // Navigation only happens once BOTH the bar animation (PREPARATION_DURATION_MS) AND
+    // the API have finished — whichever takes longer.
+    const minDisplayPromise = new Promise<void>((resolve) =>
+      window.setTimeout(resolve, PREPARATION_DURATION_MS)
+    );
 
     try {
       const response = await fetch("/api/interview/start", {
@@ -203,10 +209,10 @@ export default function LandingPage() {
       }
 
       const data = (await response.json()) as { session: InterviewSession };
-      const remainingPreparationTime = Math.max(0, PREPARATION_DURATION_MS - (Date.now() - loadingStartedAt));
-      if (remainingPreparationTime > 0) {
-        await new Promise((resolve) => window.setTimeout(resolve, remainingPreparationTime));
-      }
+
+      // If the API responded before the bar finished, wait for the remainder.
+      // If the bar already hit 100%, this resolves immediately.
+      await minDisplayPromise;
 
       setSession(data.session);
       router.push("/interview");

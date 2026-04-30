@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FinalReport, FunnelOutcome } from "@/lib/interview-types";
 import { useInterviewSession } from "@/lib/session-store";
@@ -124,14 +124,71 @@ function scoreLabel(value: number) {
   return "Needs work";
 }
 
-function ScoreCard({ label, value }: { label: keyof typeof SCORE_COLORS; value: number }) {
+const SCORE_INFO: Record<keyof typeof SCORE_COLORS, { headline: string; tips: string[] }> = {
+  Overall: {
+    headline: "Your combined interview performance across all dimensions.",
+    tips: [
+      "Strong overall scores come from answers that are specific, well-structured, and directly connected to the role.",
+      "Consistency matters — a single excellent answer is less impactful than a steady pattern of confident, relevant responses.",
+      "Think about each question as a chance to tell a short, persuasive story about your most relevant experience."
+    ]
+  },
+  Clarity: {
+    headline: "How easy your answers are to follow and understand.",
+    tips: [
+      "Use short, complete sentences rather than long, winding ones. Say one thing, then say the next.",
+      "Avoid filler words like 'um', 'uh', 'like', and 'you know' — they create noise that obscures your message.",
+      "If you need a moment to think, a brief pause sounds far more confident than verbal stalling.",
+      "Lead with your point, then explain it. Don't build up to the conclusion — state it first."
+    ]
+  },
+  Relevance: {
+    headline: "How directly your answer addresses what the interviewer is looking for.",
+    tips: [
+      "Before answering, mentally connect the question to the specific role and what success looks like in it.",
+      "Use language from the job description. If the role requires 'cross-functional collaboration', use that phrase when it's genuine.",
+      "Irrelevant stories — even impressive ones — lower this score. Keep every example tied to the competency being tested.",
+      "End answers by explicitly linking back to the role: 'That's why I think this experience maps well to what you're looking for here.'"
+    ]
+  },
+  Confidence: {
+    headline: "How composed, assured, and credible you come across.",
+    tips: [
+      "Speak at a measured pace — around 115 to 145 words per minute feels natural and authoritative. Too fast reads as nervous; too slow loses the room.",
+      "Maintain eye contact with the camera rather than looking away when thinking. It signals you're engaged and certain.",
+      "Avoid hedging language like 'I think maybe' or 'I guess' — replace them with direct statements.",
+      "Posture and facial expression matter. A calm, upright position with a natural expression reads as confident even before you speak."
+    ]
+  },
+  Engagement: {
+    headline: "How present, interested, and invested you appear throughout the interview.",
+    tips: [
+      "Stay physically still and face-forward. Constant movement or looking around signals distraction.",
+      "Show genuine reactions — a natural smile when appropriate, a thoughtful expression when listening.",
+      "Don't let your energy drop between questions. Interviewers notice when candidates visibly disengage after an answer they're unsure about.",
+      "Treat each question as equally important, even if you feel the last answer went well or poorly."
+    ]
+  }
+};
+
+function ScoreCard({ label, value, onInfo }: { label: keyof typeof SCORE_COLORS; value: number; onInfo: () => void }) {
   const color = SCORE_COLORS[label];
   const score = scoreToTen(value);
 
   return (
-    <div className="rounded-2xl bg-slate-50 px-5 py-5 shadow-sm">
-      <p className="text-center text-sm font-semibold text-ink">{label}</p>
-      <div className="mt-5 flex items-center justify-center gap-4">
+    <div className="relative rounded-2xl bg-slate-50 px-5 py-5 shadow-sm">
+      <div className="flex items-start justify-between gap-1">
+        <p className="flex-1 text-center text-sm font-semibold text-ink">{label}</p>
+        <button
+          type="button"
+          onClick={onInfo}
+          aria-label={`Learn what affects your ${label} score`}
+          className="shrink-0 grid h-5 w-5 place-items-center rounded-full border border-slate-300 text-[10px] font-bold text-slate-400 transition hover:border-slate-400 hover:text-slate-600"
+        >
+          i
+        </button>
+      </div>
+      <div className="mt-4 flex items-center justify-center gap-4">
         <div
           className="grid h-16 w-16 shrink-0 place-items-center rounded-full"
           style={{ background: `conic-gradient(${color} ${value * 3.6}deg, #edf2f7 0deg)` }}
@@ -171,7 +228,11 @@ export default function ResultsPage() {
   const { session, resetSession } = useInterviewSession();
   const [report, setReport] = useState<FinalReport | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [missedOpen, setMissedOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"feedback" | "opportunities" | "timeline">("feedback");
+  const [activeInfo, setActiveInfo] = useState<keyof typeof SCORE_COLORS | null>(null);
+  const infoPanelRef = useRef<HTMLDivElement | null>(null);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+  const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
 
   useEffect(() => {
     if (!session) {
@@ -204,6 +265,43 @@ export default function ResultsPage() {
     };
   }, [router, session]);
 
+  useEffect(() => {
+    if (!isLoading) {
+      setLoadingProgress(100);
+      return;
+    }
+
+    const timer = window.setInterval(() => {
+      setLoadingProgress((current) => {
+        if (current >= 88) return current;
+        // Organic increments — fast at first, slows near the cap
+        const increment = Math.random() * (current < 50 ? 10 : current < 75 ? 5 : 2) + 1;
+        return Math.min(88, current + increment);
+      });
+    }, 350);
+
+    return () => window.clearInterval(timer);
+  }, [isLoading]);
+
+  const LOADING_MESSAGES = [
+    "Reviewing your answers…",
+    "Analysing your confidence signals…",
+    "Checking speaking pace and clarity…",
+    "Building your hiring outcome…",
+    "Identifying missed opportunities…",
+    "Preparing your personalised feedback…"
+  ];
+
+  useEffect(() => {
+    if (!isLoading) return;
+
+    const timer = window.setInterval(() => {
+      setLoadingMessageIndex((current) => (current + 1) % LOADING_MESSAGES.length);
+    }, 2200);
+
+    return () => window.clearInterval(timer);
+  }, [isLoading, LOADING_MESSAGES.length]);
+
   const interviewerNotes = useMemo(() => report?.interviewerNotes.join(" ") ?? "", [report]);
 
   if (!session) {
@@ -233,7 +331,37 @@ export default function ResultsPage() {
         </header>
 
         {isLoading || !report ? (
-          <div className="mt-6 rounded-3xl border border-slate-200 bg-white p-8 text-slate-600">Generating your final hiring report...</div>
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-white px-8 py-10">
+            <p className="text-lg font-semibold text-ink">Generating your interview report…</p>
+            <p className="mt-1.5 h-5 text-sm text-slate-500 transition-opacity duration-500">
+              {LOADING_MESSAGES[loadingMessageIndex]}
+            </p>
+
+            <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-slate-100">
+              <div
+                className="h-full rounded-full bg-teal-500 transition-[width] duration-500 ease-out"
+                style={{ width: `${loadingProgress}%` }}
+              />
+            </div>
+
+            <div className="mt-6 grid grid-cols-3 gap-3 sm:grid-cols-6">
+              {["Answers", "Confidence", "Clarity", "Relevance", "Engagement", "Outcome"].map((label, index) => {
+                const filled = loadingProgress >= (index + 1) * 14;
+                return (
+                  <div
+                    key={label}
+                    className={`rounded-xl border px-3 py-2 text-center text-xs font-medium transition-colors duration-500 ${
+                      filled
+                        ? "border-teal-200 bg-teal-50 text-teal-700"
+                        : "border-slate-100 bg-slate-50 text-slate-400"
+                    }`}
+                  >
+                    {label}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
         ) : (
           <div className="mt-6 space-y-5">
             {(() => {
@@ -268,12 +396,48 @@ export default function ResultsPage() {
             <section className="rounded-3xl border border-slate-200 bg-white p-6">
               <p className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">Score breakdown</p>
               <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-                <ScoreCard label="Overall" value={report.overallScore} />
-                <ScoreCard label="Clarity" value={report.clarity} />
-                <ScoreCard label="Relevance" value={report.relevance} />
-                <ScoreCard label="Confidence" value={report.confidence} />
-                <ScoreCard label="Engagement" value={report.engagement} />
+                {(["Overall", "Clarity", "Relevance", "Confidence", "Engagement"] as const).map((label) => (
+                  <ScoreCard
+                    key={label}
+                    label={label}
+                    value={label === "Overall" ? report.overallScore : report[label.toLowerCase() as keyof Pick<FinalReport, "clarity" | "relevance" | "confidence" | "engagement">]}
+                    onInfo={() => {
+                      setActiveInfo((current) => (current === label ? null : label));
+                      setTimeout(() => infoPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" }), 50);
+                    }}
+                  />
+                ))}
               </div>
+
+              {activeInfo ? (
+                <div
+                  ref={infoPanelRef}
+                  className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <p className="text-sm font-bold text-ink">{activeInfo}</p>
+                      <p className="mt-1 text-sm text-slate-500">{SCORE_INFO[activeInfo].headline}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setActiveInfo(null)}
+                      aria-label="Close"
+                      className="shrink-0 grid h-7 w-7 place-items-center rounded-full border border-slate-200 bg-white text-xs text-slate-400 transition hover:border-slate-300 hover:text-slate-600"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <ul className="mt-4 space-y-2.5">
+                    {SCORE_INFO[activeInfo].tips.map((tip) => (
+                      <li key={tip} className="flex gap-3 text-sm leading-6 text-slate-600">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                        {tip}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </section>
 
             <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7">
@@ -288,83 +452,99 @@ export default function ResultsPage() {
               </div>
             </section>
 
-            <div className="grid overflow-hidden rounded-3xl border border-slate-200 bg-white lg:grid-cols-2">
-              <section className="p-6 sm:p-7">
-                <h2 className="text-lg font-semibold text-ink">What you did well</h2>
-                <div className="mt-6 space-y-7">
-                  {report.strengths.map((item, index) => (
-                    <ListItem key={item} item={item} description={report.strengthDescriptions[index] ?? ""} tone="good" />
-                  ))}
-                </div>
-              </section>
+            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+              {/* Tab bar */}
+              <div className="flex border-b border-slate-200">
+                {(
+                  [
+                    { id: "feedback",      label: "Feedback" },
+                    { id: "opportunities", label: "Missed Opportunities" },
+                    { id: "timeline",      label: "Answer Timeline" }
+                  ] as { id: typeof activeTab; label: string }[]
+                ).map(({ id, label }) => (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setActiveTab(id)}
+                    className={`flex-1 px-4 py-4 text-sm font-semibold transition-colors ${
+                      activeTab === id
+                        ? "border-b-2 border-teal-600 text-teal-700"
+                        : "text-slate-500 hover:text-ink"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
 
-              <section className="border-t border-slate-200 p-6 sm:p-7 lg:border-l lg:border-t-0">
-                <h2 className="text-lg font-semibold text-ink">What to improve</h2>
-                <div className="mt-6 space-y-7">
-                  {report.weaknesses.map((item, index) => (
-                    <ListItem key={item} item={item} description={report.weaknessDescriptions[index] ?? ""} tone="improve" />
-                  ))}
-                </div>
-              </section>
-            </div>
-
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7">
-              <button
-                type="button"
-                onClick={() => setMissedOpen((current) => !current)}
-                className="flex w-full items-start justify-between gap-5 text-left"
-                aria-expanded={missedOpen}
-              >
-                <div className="flex gap-5">
-                  <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-violet-50 text-violet-700">
-                    <SummaryIcon name="spark" />
-                  </div>
-                  <div>
-                    <h2 className="text-lg font-semibold text-ink">Missed opportunities</h2>
-                    <p className="mt-2 max-w-5xl text-sm leading-7 text-slate-600">{report.missedOpportunitySummary}</p>
-                  </div>
-                </div>
-                <span className="mt-1 inline-flex shrink-0 items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2 text-sm font-semibold text-slate-600 transition hover:border-violet-200 hover:bg-violet-50 hover:text-violet-700">
-                  {missedOpen ? "Hide details" : "Expand details"}
-                  <SummaryIcon name="chevron" className={`h-4 w-4 transition-transform ${missedOpen ? "rotate-180" : ""}`} />
-                </span>
-              </button>
-
-              {missedOpen ? (
-                <div className="mt-6 grid gap-5 border-t border-slate-200 pt-6 lg:grid-cols-2">
-                  <div>
-                    <h3 className="font-semibold text-ink">Best improved answer</h3>
-                    <p className="mt-3 rounded-2xl bg-teal-50 px-4 py-4 text-sm leading-7 text-teal-950">{report.bestImprovedAnswer}</p>
-                  </div>
-                  <div>
-                    <h3 className="font-semibold text-ink">Suggested improvements</h3>
-                    <div className="mt-3 space-y-2">
-                      {report.suggestedNextImprovements.map((item) => (
-                        <div key={item} className="rounded-2xl bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
-                          {item}
-                        </div>
+              {/* Feedback tab */}
+              {activeTab === "feedback" ? (
+                <div className="grid divide-y divide-slate-200 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+                  <section className="p-6 sm:p-7">
+                    <h2 className="text-lg font-semibold text-ink">What you did well</h2>
+                    <div className="mt-6 space-y-7">
+                      {report.strengths.map((item, index) => (
+                        <ListItem key={item} item={item} description={report.strengthDescriptions[index] ?? ""} tone="good" />
                       ))}
+                    </div>
+                  </section>
+                  <section className="p-6 sm:p-7">
+                    <h2 className="text-lg font-semibold text-ink">What to improve</h2>
+                    <div className="mt-6 space-y-7">
+                      {report.weaknesses.map((item, index) => (
+                        <ListItem key={item} item={item} description={report.weaknessDescriptions[index] ?? ""} tone="improve" />
+                      ))}
+                    </div>
+                  </section>
+                </div>
+              ) : null}
+
+              {/* Missed opportunities tab */}
+              {activeTab === "opportunities" ? (
+                <div className="p-6 sm:p-7">
+                  <div className="flex gap-4">
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-violet-50 text-violet-700">
+                      <SummaryIcon name="spark" />
+                    </div>
+                    <p className="text-sm leading-7 text-slate-600 self-center">{report.missedOpportunitySummary}</p>
+                  </div>
+                  <div className="mt-6 grid gap-5 border-t border-slate-200 pt-6 lg:grid-cols-2">
+                    <div>
+                      <h3 className="font-semibold text-ink">Best improved answer</h3>
+                      <p className="mt-3 rounded-2xl bg-teal-50 px-4 py-4 text-sm leading-7 text-teal-950">{report.bestImprovedAnswer}</p>
+                    </div>
+                    <div>
+                      <h3 className="font-semibold text-ink">Suggested improvements</h3>
+                      <div className="mt-3 space-y-2">
+                        {report.suggestedNextImprovements.map((item) => (
+                          <div key={item} className="rounded-2xl bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
+                            {item}
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
               ) : null}
-            </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7">
-              <h2 className="text-xl font-semibold text-ink">Answer timeline</h2>
-              <div className="mt-5 space-y-4">
-                {session.turns.map((turn, index) => (
-                  <article key={turn.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                    <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Question {index + 1}</p>
-                    <p className="mt-2 font-semibold text-ink">{turn.question}</p>
-                    <p className="mt-4 text-sm font-semibold text-slate-500">Answer</p>
-                    <p className="mt-2 text-sm leading-7 text-slate-700">{turn.transcript}</p>
-                    <p className="mt-4 text-sm font-semibold text-slate-500">Interviewer&apos;s thoughts</p>
-                    <p className="mt-2 rounded-2xl bg-white px-4 py-3 text-sm leading-7 text-teal-900">{turn.evaluation.interviewerReaction}</p>
-                  </article>
-                ))}
-              </div>
-            </section>
+              {/* Answer timeline tab */}
+              {activeTab === "timeline" ? (
+                <div className="p-6 sm:p-7">
+                  <div className="space-y-4">
+                    {session.turns.map((turn, index) => (
+                      <article key={turn.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                        <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Question {index + 1}</p>
+                        <p className="mt-2 font-semibold text-ink">{turn.question}</p>
+                        <p className="mt-4 text-sm font-semibold text-slate-500">Answer</p>
+                        <p className="mt-2 text-sm leading-7 text-slate-700">{turn.transcript}</p>
+                        <p className="mt-4 text-sm font-semibold text-slate-500">Interviewer&apos;s thoughts</p>
+                        <p className="mt-2 rounded-2xl bg-white px-4 py-3 text-sm leading-7 text-teal-900">{turn.evaluation.interviewerReaction}</p>
+                      </article>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
 
             <footer className="border-t border-slate-200 py-8 text-center">
               <p className="text-lg font-semibold text-ink">Keep practicing!</p>
