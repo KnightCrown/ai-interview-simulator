@@ -376,7 +376,9 @@ export default function InterviewPage() {
     void (async () => {
       if (shouldDelayNextQuestionRef.current) {
         shouldDelayNextQuestionRef.current = false;
-        await new Promise((resolve) => window.setTimeout(resolve, QUESTION_HANDOFF_DELAY_MS));
+        if (speechEngine === "tts") {
+          await new Promise((resolve) => window.setTimeout(resolve, QUESTION_HANDOFF_DELAY_MS));
+        }
 
         if (lastSpokenQuestionRef.current !== question) {
           return;
@@ -398,7 +400,7 @@ export default function InterviewPage() {
       setCaptureEnabled(true);
       setShowTranscript(true);
     })();
-  }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, stop, stopListening]);
+  }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, speechEngine, stop, stopListening]);
 
   useEffect(() => {
     if (!showTranscript || session?.interviewComplete) {
