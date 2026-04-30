@@ -8,7 +8,7 @@ import { TypingQuestion } from "@/components/typing-question";
 import { AnswerEvaluation, CandidateMoodSnapshot, InterviewSession, InterviewTurn } from "@/lib/interview-types";
 import { liveConfidenceFromSignals, pickDominantEmotion } from "@/lib/interview-scoring";
 import { useFaceTracking } from "@/hooks/useFaceTracking";
-import { useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
+import { InterviewerSpeechEngine, useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
 import { useSmoothedLiveMetric } from "@/hooks/useSmoothedLiveMetric";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
@@ -64,8 +64,9 @@ export default function InterviewPage() {
   const [preferredVideoDeviceId, setPreferredVideoDeviceId] = useState<string | null>(
     () => loadMediaDevicePreferences()?.videoInputId ?? null
   );
+  const [speechEngine, setSpeechEngine] = useState<InterviewerSpeechEngine>("elevenlabs");
   const face = useFaceTracking(preferredVideoDeviceId);
-  const interviewerSpeech = useInterviewerSpeech(session?.elevenLabsVoiceId, session?.difficulty);
+  const interviewerSpeech = useInterviewerSpeech(session?.elevenLabsVoiceId, session?.difficulty, speechEngine);
   const {
     elapsedSeconds,
     interimTranscript,
@@ -425,6 +426,10 @@ export default function InterviewPage() {
     setCoachingThoughts((current) => current.filter((item) => item.id !== id));
   }, []);
 
+  const toggleSpeechEngine = useCallback(() => {
+    setSpeechEngine((current) => (current === "elevenlabs" ? "tts" : "elevenlabs"));
+  }, []);
+
   if (!session) {
     return null;
   }
@@ -664,14 +669,24 @@ export default function InterviewPage() {
 
             <div className="mt-4 flex flex-col items-end">
               {submitError ? <p className="mb-3 text-sm font-medium text-red-600">{submitError}</p> : null}
-              <button
-                type="button"
-                onClick={() => void submitAnswer()}
-                disabled={!showTranscript || isSubmitting}
-                className="min-h-11 w-full max-w-[11rem] rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300"
-              >
-                {isSubmitting ? "Evaluating..." : "Submit early"}
-              </button>
+              <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
+                <button
+                  type="button"
+                  onClick={toggleSpeechEngine}
+                  aria-pressed={speechEngine === "elevenlabs"}
+                  className="min-h-11 rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-teal-200 hover:text-teal-700"
+                >
+                  Voice: {speechEngine === "elevenlabs" ? "ElevenLabs" : "TTS"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void submitAnswer()}
+                  disabled={!showTranscript || isSubmitting}
+                  className="min-h-11 w-full rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-44"
+                >
+                  {isSubmitting ? "Evaluating..." : "Submit early"}
+                </button>
+              </div>
               {!speechIsSupported ? <p className="mt-3 text-sm text-slate-500">Speech recognition is not supported in this browser.</p> : null}
             </div>
           </div>

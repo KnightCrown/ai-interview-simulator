@@ -10,11 +10,17 @@ const ABSOLUTE_MAX_SPEECH_MS = 90_000;
 // When the fallback fires but the browser is still speaking, recheck after this delay.
 const FALLBACK_RECHECK_MS = 1500;
 
+export type InterviewerSpeechEngine = "tts" | "elevenlabs";
+
 function clamp(value: number, min = 0, max = 1) {
   return Math.min(max, Math.max(min, value));
 }
 
-export function useInterviewerSpeech(elevenLabsVoiceId?: string | null, difficulty?: InterviewDifficulty | null) {
+export function useInterviewerSpeech(
+  elevenLabsVoiceId?: string | null,
+  difficulty?: InterviewDifficulty | null,
+  speechEngine: InterviewerSpeechEngine = "elevenlabs"
+) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [mouthLevel, setMouthLevel] = useState(0);
   const [emotion, setEmotion] = useState<AvatarEmotion>("neutral");
@@ -263,7 +269,7 @@ export function useInterviewerSpeech(elevenLabsVoiceId?: string | null, difficul
       stop();
       setError(null);
 
-      const voiceId = elevenLabsVoiceId?.trim();
+      const voiceId = speechEngine === "elevenlabs" ? elevenLabsVoiceId?.trim() : "";
       if (voiceId) {
         const elevenOk = await speakWithElevenLabs(cleanText, voiceId);
         if (elevenOk) {
@@ -380,7 +386,16 @@ export function useInterviewerSpeech(elevenLabsVoiceId?: string | null, difficul
         window.speechSynthesis.resume();
       });
     },
-    [difficulty, elevenLabsVoiceId, ensureAudioGraph, runSyntheticMouthAnimationLoop, speakWithElevenLabs, startPolling, stop]
+    [
+      difficulty,
+      elevenLabsVoiceId,
+      ensureAudioGraph,
+      runSyntheticMouthAnimationLoop,
+      speechEngine,
+      speakWithElevenLabs,
+      startPolling,
+      stop
+    ]
   );
 
   useEffect(() => {
