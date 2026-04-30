@@ -53,9 +53,13 @@ describe("buildFallbackEvaluation", () => {
 
     expect(evaluation.missingResumeHighlights).toContain("JavaScript");
     expect(evaluation.missedOpportunityDetails[0]?.impactScoreIncrease).toBeGreaterThan(0);
-    expect(evaluation.interviewerReaction).toContain("specific");
-    expect(evaluation.interviewerReaction).toMatch(/^I'm /);
-    expect(evaluation.interviewerReaction.toLowerCase()).not.toContain("the interviewer likely");
+    // The reaction should be in first-person and feel like a real interviewer's
+    // running thought — not a detached, third-person commentary template.
+    expect(evaluation.interviewerReaction).toBeTruthy();
+    const reaction = evaluation.interviewerReaction.toLowerCase();
+    expect(reaction).not.toContain("the interviewer likely");
+    expect(reaction).not.toContain("the interviewer would");
+    expect(reaction).not.toContain("the candidate");
     expect(evaluation.liveConfidence).toBeGreaterThan(0);
   });
 });

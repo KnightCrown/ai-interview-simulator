@@ -34,27 +34,79 @@ import {
 import { getRoleExpectations } from "@/lib/sample-data";
 import { isTranscriptSubstantive } from "@/lib/transcript-utils";
 
+/**
+ * Fallback interviewer reactions used only when OpenAI is unavailable. We keep a
+ * richer pool than the original single-line-per-branch design so even the
+ * fallback path doesn't sound like a template.
+ *
+ * The pools are written to feel like a real interviewer's running thoughts,
+ * varying both opener AND valence — including genuinely positive reactions when
+ * the answer was strong, not just "now pressure-test the depth" critique.
+ */
+const FALLBACK_REACTIONS_STRONG = [
+  "That was a solid answer — specific, structured, and tied directly to the work I care about. I'd want to keep this one in the conversation.",
+  "Good. They led with a concrete example and stayed with it. That's the kind of substance I can actually evaluate.",
+  "I'm impressed they didn't hedge. They committed to a position and backed it with detail — that reads as real ownership.",
+  "Nice. There was a clear arc to that answer and I could see the impact behind it. They moved themselves up the funnel with that one.",
+  "That landed. I caught the tradeoff they navigated and it sounded earned, not rehearsed."
+];
+
+const FALLBACK_REACTIONS_MIXED = [
+  "There's something here, but it's not fully formed yet. I want to hear the part where they actually decided something difficult.",
+  "Reasonable, but I'm waiting for the moment of impact. So far it's process — I need a result.",
+  "I'm tracking with them, just not yet convinced. One sharper example would tip this either way.",
+  "Some of the right ingredients, but it didn't quite cohere. I'd push them on it before deciding.",
+  "Promising direction. I'd be more confident if they tied this back to a measurable outcome."
+];
+
+const FALLBACK_REACTIONS_WEAK = [
+  "That was vaguer than I'd expect for this role. I need them to point to something they actually did, not what teams generally do.",
+  "I lost the thread there. The story stayed at altitude when I needed them to land it on a specific decision.",
+  "That answer felt rehearsed without substance underneath. I'd push back if we were live.",
+  "I'm not getting ownership in their language — it's all 'we' and no 'I'. That's a flag for me at this level.",
+  "There were claims but no proof. I need to hear the constraint they hit and how they actually got through it."
+];
+
+const FALLBACK_REACTIONS_STRICT_FOLLOWUP = [
+  (area: string) => `Same gap as before — ${area}. They had the chance to address it directly and didn't.`,
+  (area: string) => `I'm still waiting on ${area}. Until I hear it, I can't move them forward in good conscience.`,
+  (area: string) => `${area.charAt(0).toUpperCase() + area.slice(1)} is still where this falls apart for me. I need a direct answer to that, not around it.`
+];
+
+function pickFallbackReaction(pool: string[]): string {
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+
 function buildInterviewerReaction(input: {
   role: JobRole;
   liveConfidence: number;
+  clarity: number;
+  relevance: number;
+  structure: number;
   previousWeakAreas: string[];
   strictness: number;
 }) {
-  const { role, liveConfidence, previousWeakAreas, strictness } = input;
+  const { liveConfidence, clarity, relevance, structure, previousWeakAreas, strictness } = input;
+  const overall = (liveConfidence + clarity + relevance + structure) / 4;
 
-  if (strictness >= 70 || previousWeakAreas.length > 0) {
-    return `I'm still concerned about ${(previousWeakAreas[0] ?? "depth").toLowerCase()}. I need stronger evidence before I would feel confident moving this forward.`;
+  // If the same weak area keeps recurring AND strictness is high, react to that
+  // specifically — but only sometimes, so the reaction doesn't always pivot to
+  // critique.
+  if (strictness >= 70 && previousWeakAreas.length > 0 && Math.random() < 0.5) {
+    const area = previousWeakAreas[0].toLowerCase();
+    const builder = FALLBACK_REACTIONS_STRICT_FOLLOWUP[
+      Math.floor(Math.random() * FALLBACK_REACTIONS_STRICT_FOLLOWUP.length)
+    ];
+    return builder(area);
   }
 
-  if (liveConfidence >= 80) {
-    return `I'm hearing real strength for this ${role} interview. I trust the direction, and now I want to pressure-test the depth behind it.`;
+  if (overall >= 72) {
+    return pickFallbackReaction(FALLBACK_REACTIONS_STRONG);
   }
-
-  if (liveConfidence <= 50) {
-    return "I'm concerned the answer is still too broad. I need one concrete example with clearer ownership and impact.";
+  if (overall >= 50) {
+    return pickFallbackReaction(FALLBACK_REACTIONS_MIXED);
   }
-
-  return "I'm interested, but I'm still looking for clearer personal ownership and a sharper link between the work and the outcome.";
+  return pickFallbackReaction(FALLBACK_REACTIONS_WEAK);
 }
 
 /**
@@ -198,6 +250,9 @@ export function buildFallbackEvaluation(input: {
   const interviewerReaction = buildInterviewerReaction({
     role,
     liveConfidence,
+    clarity,
+    relevance,
+    structure,
     previousWeakAreas,
     strictness
   });
@@ -736,7 +791,7 @@ export async function evaluateAnswer(input: {
     ? `CRITICAL: The candidate provided NO substantive answer — the transcript is blank or contains only silence/filler.
 - Set all scores to reflect this severely: clarity 1–8, relevance 1–6, structure 1–8, confidence 1–8, engagement 1–20, liveConfidence 1–10.
 - Do NOT invent or assume any content from the candidate.
-- Write interviewerReaction as a varied, natural first-person internal monologue expressing genuine concern, frustration, or skepticism about the non-engagement. Each session may warrant a different angle — e.g. wondering if they misunderstood, feeling the process is stalling, or noting this is a red flag. Do not repeat stock phrasing.
+- Write interviewerReaction as a varied, natural first-person internal monologue. Pick a different angle each time: confused (did they not hear me?), worried (are they freezing?), frustrated (this is the ${input.previousTurns.filter((t) => !t.transcript?.trim()).length + 1}${input.previousTurns.filter((t) => !t.transcript?.trim()).length === 0 ? "st" : "nd"} time), forgiving (nerves are real), or pragmatic (I have nothing to evaluate). Do NOT start with "I'm concerned" — choose a different opener entirely. Do NOT echo any priorReaction from previous turns.
 - perceivedTone must reflect disengagement (e.g. "Disengaged", "Evasive", "Non-responsive", "Unprepared").
 - feedback must note that no substantive answer was given and explain the real-world impact on a hiring decision.`
     : "";
@@ -749,20 +804,32 @@ clarity, relevance, structure, confidence, engagement, liveConfidence, feedback,
 
 Return only a JSON object. Do not wrap it in markdown.
 Be specific and slightly more realistic than a tutoring app.
-Write interviewerReaction as the interviewer's first-person internal monologue. Use language like "I'm concerned...", "I'm looking for...", or "I trust...".
-Do not write detached phrases like "the interviewer likely", "the interviewer might", or "the interviewer would".
-Keep interviewerReaction to 1-3 direct sentences.
+
+interviewerReaction — this is the most important field for realism. Write it as the interviewer's authentic, in-the-moment internal monologue (1–3 short sentences, first person, present tense). It must:
+- React to what ACTUALLY happened in THIS specific answer — quote or paraphrase a detail from the transcript when it sharpens the reaction.
+- Match the actual valence of the answer:
+    * If the answer was strong (high clarity/relevance/structure): show genuine positive reaction — interest, respect, being impressed, appreciation for a sharp example, or curiosity to hear more. A real interviewer leans in when a candidate nails it. DO NOT pivot from praise into "now I want to pressure-test depth" — give them the win.
+    * If the answer was mixed: show measured curiosity, mild skepticism, or partial agreement. Acknowledge what worked AND what's missing.
+    * If the answer was weak: show honest concern, frustration, or doubt — but be specific about what's missing, not generic.
+- Vary the OPENING of the sentence aggressively across calls. NEVER start with "I'm concerned...". Avoid repeating any opener that previous turns already used (see Previous turns below). Examples of varied openers a real interviewer might use: "Good — they...", "That was sharp...", "Hmm, they...", "Interesting — they...", "I liked that they...", "Wait, did they really...", "OK, so they...", "That landed for me...", "Honestly, that was...", "I'm not sure I bought...", "There's something here, but...", "Solid example — the part about X...", "I appreciate the honesty around...", "That answered the question, but I wanted...", "Genuinely impressed by...", "Frustrating — they had the setup but...".
+- Sound like a HUMAN thinking, not a rubric-checker. Use contractions, fragments, and natural speech patterns. Skip corporate hedging like "the answer demonstrated...".
+- DO NOT use the third person ("the candidate", "the interviewer"). Always first person ("I", "they", "you").
+- DO NOT use the same template across answers. If you wrote "I'm looking for X" last turn, write something structurally different this turn.
+
 ${emptyAnswerNote}
-Difficulty calibration (critical):
-- Easy: supportive and coach-like. Be lenient on rough edges, and only flag major misses.
-- Medium: realistic and professionally skeptical. Do NOT be overly generous. Reserve 85+ scores for clearly exceptional, evidence-backed answers.
-- Hard: strict senior-interviewer bar. Be difficult to impress, aggressively penalize vague claims, and require tradeoffs, ownership, and measurable impact for strong scores.
+
+Difficulty calibration (affects scoring AND tone of interviewerReaction):
+- Easy: supportive coach. When something works, reinforce it warmly. Only flag major misses, and frame gaps as growth opportunities.
+- Medium: realistic peer interviewer. Honest both ways — call out wins clearly when earned AND name gaps directly. Reserve 85+ scores for clearly exceptional, evidence-backed answers.
+- Hard: senior interviewer with high bar. Difficult to impress — but when impressed, say so plainly and without qualification. Aggressively penalize vague claims, require tradeoffs, ownership, and measurable impact for strong scores. Even when critical, your reaction should sound like a real senior person, not a checklist.
+
 Memory: ${JSON.stringify(input.memory)}
 Candidate resume context: ${JSON.stringify(input.resume)}
-Previous turns: ${JSON.stringify(
+Previous turns (note their interviewerReaction openers — DO NOT reuse the same opening pattern): ${JSON.stringify(
       input.previousTurns.map((turn) => ({
         q: turn.question,
         a: turn.transcript,
+        priorReaction: turn.evaluation.interviewerReaction,
         eval: {
           clarity: turn.evaluation.clarity,
           relevance: turn.evaluation.relevance,
@@ -774,7 +841,7 @@ Transcript: ${input.transcript || "(no answer — candidate submitted without sp
 Speech metrics: ${JSON.stringify(input.speechMetrics)}
 Face metrics: ${JSON.stringify(input.faceMetrics)}
 Candidate apparent facial demeanor during this answer (aggregated over the answer window): ${JSON.stringify(input.candidateMood ?? null)}
-Interpret demeanor like a real interviewer: guarded, flat, sad-looking, or visibly tense delivery can reasonably affect perceived enthusiasm and confidence even when the words are decent—without inventing facts beyond this signal.
+Interpret demeanor like a real interviewer: guarded, flat, sad-looking, or visibly tense delivery can reasonably affect perceived enthusiasm and confidence even when the words are decent — without inventing facts beyond this signal. Conversely, an engaged, animated demeanor with a strong answer can warrant warmer reactions.
 Interview difficulty: ${input.difficulty}
 Role expectations: ${JSON.stringify(getRoleExpectations(input.role))}
 `,
