@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackPanel, type CoachingThought } from "@/components/feedback-panel";
-import { InterviewerAvatar } from "@/components/interviewer-avatar";
+import { Avatar2D } from "@/components/avatar-2d";
 import { TypingQuestion } from "@/components/typing-question";
 import { AnswerEvaluation, CandidateMoodSnapshot, FaceEmotionDominant, FaceEmotionScores, InterviewSession, InterviewTurn } from "@/lib/interview-types";
 import { liveConfidenceFromSignals } from "@/lib/interview-scoring";
@@ -564,11 +564,12 @@ export default function InterviewPage() {
         <section className="space-y-5">
           <div className="relative mx-auto aspect-video max-h-[46vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-950 shadow-panel">
             {mainVideo === "interviewer" ? (
-              <InterviewerAvatar
+              <Avatar2D
                 className="h-full w-full rounded-2xl border-0 shadow-none"
                 mouthLevel={mouthLevel}
                 emotion={displayedAvatarEmotion}
                 isSpeaking={isSpeaking}
+                voiceId={session?.elevenLabsVoiceId}
                 title="AI interviewer"
                 showLabels={false}
               />
@@ -598,12 +599,13 @@ export default function InterviewPage() {
 
             {mainVideo === "candidate" ? (
               <div className="absolute bottom-4 right-4 h-[34%] w-[28%] min-w-40">
-                <InterviewerAvatar
+                <Avatar2D
                   compact
                   className="h-full w-full rounded-xl border border-white/20 shadow-2xl"
                   mouthLevel={mouthLevel}
                   emotion={displayedAvatarEmotion}
                   isSpeaking={isSpeaking}
+                  voiceId={session?.elevenLabsVoiceId}
                   onClick={() => setMainVideo("interviewer")}
                   title="AI interviewer"
                   showLabels={false}
