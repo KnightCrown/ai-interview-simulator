@@ -175,6 +175,27 @@ export function buildFallbackEvaluation(input: {
   };
 }
 
+const EMPTY_ANSWER_REACTIONS = [
+  "Nothing came back. I don't know if they misunderstood the question or just aren't ready, but I can't assess someone who won't engage.",
+  "Silence isn't an answer. I need something concrete to work with — right now there's nothing to evaluate and that's a real problem.",
+  "That was a non-starter. I'm sitting here waiting for substance and getting none. It's hard to advocate for someone who won't show up in the moment.",
+  "I have no idea what they're thinking. If they can't respond to a direct question, I have to question whether they're prepared for this role at all.",
+  "This is stalling the whole process. I need them to engage — give me one example, one thought, anything — or there's genuinely nothing I can do with this.",
+  "A blank submission tells me more than a weak answer would. It signals disengagement, and that's very hard to overlook at this stage.",
+  "I asked a straightforward question and got nothing. That's not nerves — that's a gap I can't bridge on my end."
+];
+
+const EMPTY_ANSWER_FEEDBACK = [
+  "You submitted without speaking to the question. In a real interview loop that registers as disengagement — even a rough, imperfect answer is far better than silence. Next time, lead with one concrete example before anything else.",
+  "Nothing was captured. Interviewers have no material to advocate for a candidate who doesn't respond. Start your answer immediately, even if you need to think aloud first.",
+  "A blank answer is the costliest mistake in an interview — it removes any chance of evaluation. Speak up, even briefly: one specific example from your experience is enough to anchor the conversation.",
+  "No answer was given. Silence or early submission signals unpreparedness to a hiring team. The fix is simple: commit to speaking the moment the timer starts, and lead with a real example."
+];
+
+function pickRandom<T>(array: T[]): T {
+  return array[Math.floor(Math.random() * array.length)];
+}
+
 function buildEmptyAnswerEvaluation(input: {
   role: JobRole;
   transcript: string;
@@ -195,7 +216,7 @@ function buildEmptyAnswerEvaluation(input: {
   const missedOpportunityDetails = buildMissedOpportunityDetails(role, transcript, resume);
   const missedOpportunity =
     missedOpportunityDetails[0]?.exactThing ??
-    "There was no answer content to evaluate—this costs credibility fast in a real loop.";
+    `No answer was given — speaking to even one concrete ${role} example would have given the evaluation something to work with.`;
   const improvedAnswer = buildImprovedAnswer(role, resume, missingResumeHighlights, transcript || " ");
 
   return {
@@ -205,15 +226,13 @@ function buildEmptyAnswerEvaluation(input: {
     confidence,
     engagement,
     liveConfidence,
-    feedback:
-      "No substantive answer was captured—you submitted without addressing the question. In a real interview that reads as disengagement or lack of preparation. Speak out loud with at least one concrete example next time.",
+    feedback: pickRandom(EMPTY_ANSWER_FEEDBACK),
     missedOpportunity,
     missingResumeHighlights,
     missedOpportunityDetails,
     improvedAnswer,
     rewriteHighlights: buildRewriteHighlights(transcript, improvedAnswer),
-    interviewerReaction:
-      "I'm concerned—they didn't answer my question at all. That signals they're either unprepared or not taking this seriously, and I can't move forward without substance. I need them to engage directly or this process doesn't work.",
+    interviewerReaction: pickRandom(EMPTY_ANSWER_REACTIONS),
     perceivedTone: "Disengaged / non-responsive",
     pressureLabel: derivePressureLabel(liveConfidence)
   };
