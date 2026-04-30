@@ -508,6 +508,57 @@ describe("advanceHiringStage", () => {
 });
 
 describe("buildFallbackFinalReport", () => {
+  it("returns empty strengths and weaknesses when the session has no turns", () => {
+    const session = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+
+    const report = buildFallbackFinalReport(session);
+
+    expect(report.strengths).toEqual([]);
+    expect(report.strengthDescriptions).toEqual([]);
+    expect(report.weaknesses).toEqual([]);
+    expect(report.weaknessDescriptions).toEqual([]);
+    expect(report.overallScore).toBe(0);
+    expect(report.hiringOutcome).toBe("Rejected");
+    expect(report.missedOpportunitySummary).toMatch(/no interview answers/i);
+  });
+
+  it("returns empty strengths and weaknesses when every turn has a non-substantive transcript", () => {
+    const session = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    session.turns = [
+      {
+        id: "turn-empty",
+        question: "Tell me about a project.",
+        transcript: "   ",
+        durationSeconds: 0,
+        speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 0 },
+        faceMetrics: sampleFace(),
+        evaluation: {
+          clarity: 0,
+          relevance: 0,
+          structure: 0,
+          confidence: 0,
+          engagement: 0,
+          liveConfidence: 0,
+          feedback: "",
+          missedOpportunity: "",
+          missingResumeHighlights: [],
+          missedOpportunityDetails: [],
+          improvedAnswer: "",
+          rewriteHighlights: [],
+          interviewerReaction: "",
+          perceivedTone: "",
+          pressureLabel: ""
+        }
+      }
+    ];
+
+    const report = buildFallbackFinalReport(session);
+
+    expect(report.strengths).toEqual([]);
+    expect(report.weaknesses).toEqual([]);
+    expect(report.overallScore).toBe(0);
+  });
+
   it("produces a recruiter-style report with emotional summary and outcome", () => {
     const session: InterviewSession = {
       id: "session-1",

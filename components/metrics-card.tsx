@@ -15,16 +15,16 @@ export function MetricsCard({ speech, face }: MetricsCardProps) {
         <ScorePill label="Head Stability" value={face.headStability} />
       </div>
 
-      <div className="mt-5 grid gap-4 text-sm text-slate-700 sm:grid-cols-2">
-        <div className="rounded-2xl bg-slate-50 p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Speaking pace</p>
-          <p className="mt-2 text-2xl font-semibold text-ink">{speech.speakingPace} wpm</p>
-          <p className="mt-2 text-xs text-slate-500">Stable delivery tends to land best between 105 and 155 wpm.</p>
+      <div className="mt-5 grid gap-4 text-sm text-slate-700 sm:grid-cols-2 dark:text-slate-300">
+        <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/70">
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Speaking pace</p>
+          <p className="mt-2 text-2xl font-semibold text-ink dark:text-white">{speech.speakingPace} wpm</p>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">Stable delivery tends to land best between 105 and 155 wpm.</p>
         </div>
-        <div className="rounded-2xl bg-slate-50 p-4">
-          <p className="text-xs uppercase tracking-[0.18em] text-slate-500">Filler words</p>
-          <p className="mt-2 text-2xl font-semibold text-ink">{speech.fillerCount}</p>
-          <p className="mt-2 text-xs text-slate-500">{speech.fillerWords.join(", ") || "No filler patterns detected yet."}</p>
+        <div className="rounded-2xl bg-slate-50 p-4 dark:bg-slate-800/70">
+          <p className="text-xs uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Filler words</p>
+          <p className="mt-2 text-2xl font-semibold text-ink dark:text-white">{speech.fillerCount}</p>
+          <p className="mt-2 text-xs text-slate-500 dark:text-slate-400">{speech.fillerWords.join(", ") || "No filler patterns detected yet."}</p>
         </div>
       </div>
     </div>

@@ -333,27 +333,40 @@ function buildEmptyAnswerEvaluation(input: {
   };
 }
 
+/**
+ * True if at least one of the candidate's turns has a substantive transcript.
+ * Used to decide whether the final report should attempt to characterize
+ * strengths/weaknesses at all — without any real answer text we have nothing
+ * honest to base feedback on.
+ */
+export function hasSubstantiveAnswers(session: InterviewSession): boolean {
+  return session.turns.some((turn) => isTranscriptSubstantive(turn.transcript));
+}
+
 export function buildFallbackFinalReport(session: InterviewSession): FinalReport {
   const turns = session.turns;
 
-  if (turns.length === 0) {
+  // No substantive answers (either zero turns, or all turns were silent / empty).
+  // Return an honest "no feedback yet" report rather than fabricating positive
+  // strengths or generic weaknesses for a candidate who never actually spoke.
+  if (!hasSubstantiveAnswers(session)) {
     return {
       overallScore: 0,
       clarity: 0,
       relevance: 0,
       confidence: 0,
       engagement: 0,
-      missedOpportunitySummary: "No interview answers were captured.",
-      bestImprovedAnswer: "Try another session to generate a tailored improved answer.",
+      missedOpportunitySummary: "No interview answers were captured, so there is nothing to evaluate yet.",
+      bestImprovedAnswer: "Answer at least one question in a future session to generate a tailored improved answer.",
       hiringLikelihood: "Fail",
       hiringOutcome: "Rejected",
-      emotionalSummary: "Hard to assess because the interview ended before any full answer was captured.",
-      strengths: ["Session setup complete"],
-      strengthDescriptions: ["The session was configured and ready to go."],
-      weaknesses: ["No answer data yet"],
-      weaknessDescriptions: ["Complete at least three answers to generate a meaningful evaluation."],
+      emotionalSummary: "The interview ended before any answer was captured, so there is nothing to evaluate.",
+      strengths: [],
+      strengthDescriptions: [],
+      weaknesses: [],
+      weaknessDescriptions: [],
       interviewerNotes: ["The candidate ended the interview before a full evaluation could be formed."],
-      suggestedNextImprovements: ["Complete at least three answers to generate a fuller recruiter-style report."]
+      suggestedNextImprovements: ["Answer at least one question to generate a meaningful evaluation."]
     };
   }
 
@@ -580,12 +593,14 @@ export function normalizeFinalReport(parsed: Partial<FinalReport>, fallback: Fin
   const rawWeaknessDescriptions = asStringArray(parsed.weaknessDescriptions, fallback.weaknessDescriptions);
 
   // Ensure description arrays are the same length as their paired item arrays,
-  // padding with fallback values if the LLM returned fewer entries.
+  // padding with fallback values if the LLM returned fewer entries. Falls back
+  // to an empty string (rather than undefined) when neither the LLM nor the
+  // fallback provides a description, so the UI can render safely.
   const strengthDescriptions = strengths.map(
-    (_, i) => rawStrengthDescriptions[i] ?? fallback.strengthDescriptions[i] ?? fallback.strengthDescriptions[0]
+    (_, i) => rawStrengthDescriptions[i] ?? fallback.strengthDescriptions[i] ?? fallback.strengthDescriptions[0] ?? ""
   );
   const weaknessDescriptions = weaknesses.map(
-    (_, i) => rawWeaknessDescriptions[i] ?? fallback.weaknessDescriptions[i] ?? fallback.weaknessDescriptions[0]
+    (_, i) => rawWeaknessDescriptions[i] ?? fallback.weaknessDescriptions[i] ?? fallback.weaknessDescriptions[0] ?? ""
   );
 
   return {
@@ -866,6 +881,14 @@ Role expectations: ${JSON.stringify(getRoleExpectations(input.role))}
 
 export async function finalizeInterview(session: InterviewSession) {
   const fallback = buildFallbackFinalReport(session);
+
+  // If no substantive answers were captured, skip the LLM entirely. Otherwise it
+  // will hallucinate generic strengths / weaknesses (e.g. "clear ownership",
+  // "structured response") for a candidate who never actually spoke.
+  if (!hasSubstantiveAnswers(session)) {
+    return fallback;
+  }
+
   const openAiResponse = await generateWithOpenAI(
     `
 You are producing a polished final hiring report.

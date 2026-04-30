@@ -2,10 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { loadMediaDevicePreferences, markMediaPermissionGranted, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
 import { InterviewDifficulty, InterviewSession, ResumeMode } from "@/lib/interview-types";
 import { useInterviewSession } from "@/lib/session-store";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { TechSpecsButton } from "@/components/tech-specs-button";
+
+const GITHUB_URL = "https://github.com/KnightCrown/ai-interview-simulator";
 
 const LANDING_JOB_ROLES = ["Software Developer", "Registered Nurse", "Financial Analyst", "Marketing Manager", "Other"];
 const PREPARATION_DURATION_MS = 5000;
@@ -37,12 +41,6 @@ const DEMO_THOUGHTS = [
   "Nice STAR-style structure. The metrics you mentioned are landing well. Keep the pace steady and you are set."
 ];
 
-const TESTIMONIALS = [
-  { name: "Maya R.", role: "Software Engineer", quote: "The live filler-word feedback alone changed how I answer behavioral questions. I felt 10x more prepared walking into my actual interview." },
-  { name: "Daniel O.", role: "Registered Nurse", quote: "Practicing with the AI interviewer made my real panel feel familiar instead of scary. I landed the role on my first try." },
-  { name: "Priya S.", role: "Marketing Manager", quote: "The replay and rewrite loop helped me cut roughly 40% of my filler words in a single weekend of practice." }
-];
-
 const FEATURES_LIST = [
   "Adaptive AI interviewers that respond to your answers",
   "Live confidence, speaking pace, and filler-word tracking",
@@ -65,7 +63,7 @@ const FEATURE_TILES: { title: string; body: string; tone: "teal" | "indigo" | "a
   { title: "Role specific", body: "Tailored questions for your target role.", tone: "violet", icon: "badge" }
 ];
 
-type PopoverId = "how" | "features" | "pricing" | "stories";
+type PopoverId = "how" | "features" | "pricing";
 
 function ConfidenceRing({ value }: { value: number }) {
   const radius = 36;
@@ -75,23 +73,22 @@ function ConfidenceRing({ value }: { value: number }) {
   return (
     <div className="relative h-[88px] w-[88px]">
       <svg viewBox="0 0 100 100" className="h-full w-full -rotate-90">
-        <circle cx="50" cy="50" r={radius} stroke="#e2e8f0" strokeWidth="9" fill="none" />
+        <circle cx="50" cy="50" r={radius} className="stroke-slate-200 dark:stroke-slate-700" strokeWidth="9" fill="none" />
         <circle
           cx="50"
           cy="50"
           r={radius}
-          stroke="#0f766e"
+          className="stroke-teal-700 dark:stroke-teal-400 transition-[stroke-dashoffset] duration-700 ease-out"
           strokeWidth="9"
           fill="none"
           strokeLinecap="round"
           strokeDasharray={circumference}
           strokeDashoffset={offset}
-          className="transition-[stroke-dashoffset] duration-700 ease-out"
         />
       </svg>
       <div className="absolute inset-0 flex flex-col items-center justify-center">
-        <span className="text-xl font-semibold leading-none text-ink">{clamped}</span>
-        <span className="mt-0.5 text-[10px] font-medium text-slate-400">/100</span>
+        <span className="text-xl font-semibold leading-none text-ink dark:text-white">{clamped}</span>
+        <span className="mt-0.5 text-[10px] font-medium text-slate-400 dark:text-slate-500">/100</span>
       </div>
     </div>
   );
@@ -118,10 +115,10 @@ function WaveformBars() {
 
 function FeatureIcon({ kind, tone }: { kind: "brain" | "chart" | "replay" | "badge"; tone: "teal" | "indigo" | "amber" | "violet" }) {
   const toneClasses: Record<typeof tone, string> = {
-    teal: "bg-teal-100 text-teal-700",
-    indigo: "bg-indigo-100 text-indigo-700",
-    amber: "bg-amber-100 text-amber-700",
-    violet: "bg-violet-100 text-violet-700"
+    teal: "bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300",
+    indigo: "bg-indigo-100 text-indigo-700 dark:bg-indigo-900/40 dark:text-indigo-300",
+    amber: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300",
+    violet: "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
   };
   return (
     <span className={`grid h-10 w-10 place-items-center rounded-full ${toneClasses[tone]}`} aria-hidden="true">
@@ -180,6 +177,8 @@ export default function LandingPage() {
   const [selectedVideoDeviceId, setSelectedVideoDeviceId] = useState("");
 
   const [showSetupModal, setShowSetupModal] = useState(false);
+  const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
+  const roleDropdownRef = useRef<HTMLDivElement>(null);
   const [openPopover, setOpenPopover] = useState<PopoverId | null>(null);
   const [demoQuestionIndex, setDemoQuestionIndex] = useState(0);
   const [demoConfidence, setDemoConfidence] = useState(62);
@@ -244,6 +243,7 @@ export default function LandingPage() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       setOpenPopover(null);
+      setRoleDropdownOpen(false);
       if (!showDeviceDialog && !showPreparationOverlay) {
         setShowSetupModal(false);
       }
@@ -251,6 +251,16 @@ export default function LandingPage() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [showDeviceDialog, showPreparationOverlay]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (roleDropdownRef.current && !roleDropdownRef.current.contains(event.target as Node)) {
+        setRoleDropdownOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, []);
 
   const stopMediaStream = (stream: MediaStream) => {
     stream.getTracks().forEach((track) => track.stop());
@@ -477,29 +487,29 @@ export default function LandingPage() {
 
       <header className="relative z-30 flex items-center justify-between py-6">
         <Link href="/" className="flex items-center gap-3">
-          <span className="grid h-9 w-9 place-items-center rounded-xl bg-ink text-sm font-bold tracking-tight text-white">AI</span>
-          <span className="text-base font-semibold text-ink">Interview Simulator</span>
+          <span className="grid h-9 w-9 place-items-center rounded-xl bg-ink text-sm font-bold tracking-tight text-white dark:bg-white dark:text-ink">AI</span>
+          <span className="text-base font-semibold text-ink dark:text-white">Interview Simulator</span>
         </Link>
 
         <div className="hidden items-center gap-1 md:flex">
           <NavButton id="how" label="How it works" active={openPopover === "how"} onClick={togglePopover} />
           <NavButton id="features" label="Features" active={openPopover === "features"} onClick={togglePopover} />
           <NavButton id="pricing" label="Pricing" active={openPopover === "pricing"} onClick={togglePopover} />
-          <NavButton id="stories" label="Success stories" active={openPopover === "stories"} onClick={togglePopover} />
+          <TechSpecsButton variant="nav" />
         </div>
 
         {openPopover ? (
           <div
-            className="fixed inset-0 z-40 grid place-items-center bg-ink/45 px-4 backdrop-blur-sm"
+            className="fixed inset-0 z-40 grid place-items-center bg-ink/45 px-4 backdrop-blur-sm dark:bg-black/65"
             onMouseDown={(event) => {
               if (event.target === event.currentTarget) setOpenPopover(null);
             }}
           >
-            <div className="landing-fade relative w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-panel">
+            <div className="landing-fade relative w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-6 shadow-panel dark:border-slate-700 dark:bg-slate-900">
               <button
                 type="button"
                 onClick={() => setOpenPopover(null)}
-                className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink"
+                className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
                 aria-label="Close menu"
               >
                 x
@@ -507,14 +517,14 @@ export default function LandingPage() {
 
               {openPopover === "how" ? (
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700">How it works</p>
-                  <h3 className="mt-2 text-xl font-semibold text-ink">Practice in four short steps</h3>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700 dark:text-teal-300">How it works</p>
+                  <h3 className="mt-2 text-xl font-semibold text-ink dark:text-white">Practice in four short steps</h3>
                   <ol className="mt-4 space-y-3">
                     {HOW_IT_WORKS.map((step, index) => (
                       <li key={step.title} className="flex gap-3">
-                        <span className="grid h-7 w-7 flex-none place-items-center rounded-full bg-teal-100 text-xs font-semibold text-teal-800">{index + 1}</span>
-                        <span className="text-sm text-slate-700">
-                          <span className="font-semibold text-ink">{step.title}.</span> {step.body}
+                        <span className="grid h-7 w-7 flex-none place-items-center rounded-full bg-teal-100 text-xs font-semibold text-teal-800 dark:bg-teal-900/60 dark:text-teal-200">{index + 1}</span>
+                        <span className="text-sm text-slate-700 dark:text-slate-300">
+                          <span className="font-semibold text-ink dark:text-white">{step.title}.</span> {step.body}
                         </span>
                       </li>
                     ))}
@@ -524,12 +534,12 @@ export default function LandingPage() {
 
               {openPopover === "features" ? (
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700">Features</p>
-                  <h3 className="mt-2 text-xl font-semibold text-ink">Everything in one practice room</h3>
-                  <ul className="mt-4 space-y-2 text-sm text-slate-700">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700 dark:text-teal-300">Features</p>
+                  <h3 className="mt-2 text-xl font-semibold text-ink dark:text-white">Everything in one practice room</h3>
+                  <ul className="mt-4 space-y-2 text-sm text-slate-700 dark:text-slate-300">
                     {FEATURES_LIST.map((feature) => (
                       <li key={feature} className="flex items-start gap-2">
-                        <span aria-hidden="true" className="mt-1 inline-block h-1.5 w-1.5 flex-none rounded-full bg-teal-600" />
+                        <span aria-hidden="true" className="mt-1 inline-block h-1.5 w-1.5 flex-none rounded-full bg-teal-600 dark:bg-teal-400" />
                         <span>{feature}</span>
                       </li>
                     ))}
@@ -539,9 +549,9 @@ export default function LandingPage() {
 
               {openPopover === "pricing" ? (
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700">Pricing</p>
-                  <h3 className="mt-2 text-xl font-semibold text-ink">Free for everyone</h3>
-                  <p className="mt-3 text-sm leading-6 text-slate-700">
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700 dark:text-teal-300">Pricing</p>
+                  <h3 className="mt-2 text-xl font-semibold text-ink dark:text-white">Free for everyone</h3>
+                  <p className="mt-3 text-sm leading-6 text-slate-700 dark:text-slate-300">
                     This is an OpenAI Hackathon project. There are no accounts, no payments, and no credit card required. Open the
                     page, pick a role, and start practicing right away. We may add premium tiers later, but the core simulator
                     will always have a free practice mode.
@@ -549,54 +559,54 @@ export default function LandingPage() {
                 </div>
               ) : null}
 
-              {openPopover === "stories" ? (
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700">Success stories</p>
-                  <h3 className="mt-2 text-xl font-semibold text-ink">What practice users tell us</h3>
-                  <ul className="mt-4 space-y-4">
-                    {TESTIMONIALS.map((story) => (
-                      <li key={story.name} className="rounded-2xl bg-slate-50 p-4">
-                        <p className="text-sm leading-6 text-slate-700">&ldquo;{story.quote}&rdquo;</p>
-                        <p className="mt-2 text-xs font-semibold text-slate-500">
-                          {story.name} &middot; {story.role}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              ) : null}
             </div>
           </div>
         ) : null}
 
-        <button
-          type="button"
-          onClick={openSetupModal}
-          className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800"
-        >
-          Start your first interview
-        </button>
-      </header>
-
-      <section className="mt-10 text-center">
-        <h1 className="mx-auto max-w-4xl text-4xl font-semibold leading-tight tracking-tight text-ink md:text-5xl lg:text-6xl">
-          Practice real interviews.
-          <br />
-          Get real feedback. <span className="text-accent">Land the job.</span>
-        </h1>
-        <p className="mx-auto mt-5 max-w-xl text-base text-slate-500 md:text-lg">
-          AI interviewers. Real-time feedback. Smarter you.
-        </p>
-
-        <div className="mt-6 flex flex-col items-center gap-2">
+        <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={openSetupModal}
-            className="inline-flex items-center gap-2 rounded-full bg-ink px-7 py-3.5 text-base font-semibold text-white transition hover:bg-slate-800"
+            className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-teal-500 dark:text-white dark:hover:bg-teal-400"
           >
             Start your first interview
           </button>
-          <p className="flex items-center gap-1.5 text-xs text-slate-500">
+          <ThemeToggle />
+        </div>
+      </header>
+
+      <section className="mt-10 text-center">
+        <h1 className="mx-auto max-w-4xl text-4xl font-semibold leading-tight tracking-tight text-ink md:text-5xl lg:text-6xl dark:text-white">
+          Practice real interviews.
+          <br />
+          Get real feedback. <span className="text-accent dark:text-teal-300">Land the job.</span>
+        </h1>
+        <p className="mx-auto mt-5 max-w-xl text-base text-slate-500 md:text-lg dark:text-slate-400">
+          AI interviewers. Real-time feedback. Smarter you.
+        </p>
+
+        <div className="mt-8 flex flex-col items-center gap-3">
+          <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-stretch">
+            <button
+              type="button"
+              onClick={openSetupModal}
+              className="inline-flex items-center justify-center gap-2 rounded-full bg-ink px-7 py-3.5 text-base font-semibold text-white transition hover:bg-slate-800 dark:bg-teal-500 dark:text-white dark:hover:bg-teal-400"
+            >
+              Start your first interview
+            </button>
+            <a
+              href={GITHUB_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-300 bg-white px-7 py-3.5 text-base font-semibold text-ink transition hover:border-slate-400 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900 dark:text-white dark:hover:border-slate-600 dark:hover:bg-slate-800"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <path d="M12 .5a11.5 11.5 0 0 0-3.6 22.4c.6.1.8-.3.8-.6v-2c-3.2.7-3.9-1.5-3.9-1.5-.5-1.3-1.3-1.7-1.3-1.7-1.1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.7 1.3 3.4 1 .1-.8.4-1.3.8-1.6-2.6-.3-5.3-1.3-5.3-5.7 0-1.3.4-2.3 1.2-3.2-.1-.3-.5-1.5.1-3.1 0 0 1-.3 3.2 1.2a11.1 11.1 0 0 1 5.8 0c2.2-1.5 3.2-1.2 3.2-1.2.6 1.6.2 2.8.1 3.1.7.9 1.2 1.9 1.2 3.2 0 4.5-2.7 5.4-5.3 5.7.4.3.8 1 .8 2.1v3c0 .3.2.7.8.6A11.5 11.5 0 0 0 12 .5z" />
+              </svg>
+              View on GitHub
+            </a>
+          </div>
+          <p className="flex items-center gap-1.5 text-xs text-slate-500 dark:text-slate-400">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <polyline points="20 6 9 17 4 12" />
             </svg>
@@ -605,65 +615,65 @@ export default function LandingPage() {
         </div>
       </section>
 
-      <section className="mt-5">
-        <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-4 shadow-panel backdrop-blur md:p-6">
+      <section className="mt-12">
+        <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-4 shadow-panel backdrop-blur dark:border-slate-700 dark:bg-slate-900/60 md:p-6">
           <div className="grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)_240px]">
-            <aside className="rounded-3xl border border-slate-200 bg-white p-5">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Live insights</p>
+            <aside className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400 dark:text-slate-500">Live insights</p>
 
               <div className="mt-5 flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-slate-500">Confidence</p>
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Confidence</p>
                 </div>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300" aria-hidden="true">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300 dark:text-slate-600" aria-hidden="true">
                   <polyline points="23 4 23 10 17 10" />
                   <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
                 </svg>
               </div>
               <div className="mt-3 flex items-center gap-4">
                 <ConfidenceRing value={demoConfidence} />
-                <p className="text-xs font-semibold text-emerald-600">Good</p>
+                <p className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">Good</p>
               </div>
 
-              <div className="mt-6 border-t border-slate-100 pt-5">
+              <div className="mt-6 border-t border-slate-100 pt-5 dark:border-slate-800">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-slate-500">Speaking pace</p>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300" aria-hidden="true">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Speaking pace</p>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300 dark:text-slate-600" aria-hidden="true">
                     <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
                     <polyline points="17 6 23 6 23 12" />
                   </svg>
                 </div>
-                <p className="mt-2"><span className="text-2xl font-semibold text-ink">120</span> <span className="text-sm font-medium text-slate-400">wpm</span></p>
-                <p className="mt-1 text-xs font-medium text-emerald-600">Good pace</p>
+                <p className="mt-2"><span className="text-2xl font-semibold text-ink dark:text-white">120</span> <span className="text-sm font-medium text-slate-400 dark:text-slate-500">wpm</span></p>
+                <p className="mt-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">Good pace</p>
               </div>
 
-              <div className="mt-5 border-t border-slate-100 pt-5">
+              <div className="mt-5 border-t border-slate-100 pt-5 dark:border-slate-800">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-slate-500">Filler words</p>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300" aria-hidden="true">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Filler words</p>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300 dark:text-slate-600" aria-hidden="true">
                     <line x1="6" y1="20" x2="6" y2="10" />
                     <line x1="12" y1="20" x2="12" y2="4" />
                     <line x1="18" y1="20" x2="18" y2="14" />
                   </svg>
                 </div>
-                <p className="mt-2 text-2xl font-semibold text-ink">2</p>
-                <p className="mt-1 text-xs font-medium text-emerald-600">Low</p>
+                <p className="mt-2 text-2xl font-semibold text-ink dark:text-white">2</p>
+                <p className="mt-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">Low</p>
               </div>
 
-              <div className="mt-5 border-t border-slate-100 pt-5">
+              <div className="mt-5 border-t border-slate-100 pt-5 dark:border-slate-800">
                 <div className="flex items-center justify-between">
-                  <p className="text-sm font-medium text-slate-500">Eye contact</p>
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300" aria-hidden="true">
+                  <p className="text-sm font-medium text-slate-500 dark:text-slate-400">Eye contact</p>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-slate-300 dark:text-slate-600" aria-hidden="true">
                     <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
                     <circle cx="12" cy="12" r="3" />
                   </svg>
                 </div>
-                <p className="mt-2 text-2xl font-semibold text-ink">68%</p>
-                <p className="mt-1 text-xs font-medium text-emerald-600">Good</p>
+                <p className="mt-2 text-2xl font-semibold text-ink dark:text-white">68%</p>
+                <p className="mt-1 text-xs font-medium text-emerald-600 dark:text-emerald-400">Good</p>
               </div>
             </aside>
 
-            <div className="rounded-3xl border border-slate-200 bg-white p-3">
+            <div className="rounded-3xl border border-slate-200 bg-white p-3 dark:border-slate-700 dark:bg-slate-900">
               <div className="relative aspect-video w-full overflow-hidden rounded-2xl bg-slate-900">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
@@ -709,16 +719,16 @@ export default function LandingPage() {
                 </div>
               </div>
 
-              <div className="mt-4 flex items-center justify-between text-xs font-semibold text-slate-500">
+              <div className="mt-4 flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
                 <span>Question 2 of 5</span>
                 <span>{formattedDemoTime}</span>
               </div>
-              <p key={`body-${demoQuestionIndex}`} className="landing-fade mt-2 text-sm leading-6 text-ink">
+              <p key={`body-${demoQuestionIndex}`} className="landing-fade mt-2 text-sm leading-6 text-ink dark:text-slate-200">
                 {currentDemoQuestion.body}
               </p>
 
-              <div className="mt-4 flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3">
-                <span className="text-xs font-semibold text-slate-500">Listening...</span>
+              <div className="mt-4 flex items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 dark:border-slate-800 dark:bg-slate-800/60">
+                <span className="text-xs font-semibold text-slate-500 dark:text-slate-300">Listening...</span>
                 <WaveformBars />
                 <span className="grid h-8 w-8 place-items-center rounded-full bg-rose-500 text-white" aria-hidden="true">
                   <span className="block h-2.5 w-2.5 rounded-[2px] bg-white" />
@@ -726,27 +736,27 @@ export default function LandingPage() {
               </div>
             </div>
 
-            <aside className="rounded-3xl border border-slate-200 bg-white p-5">
+            <aside className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
               <div className="flex items-center justify-between">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">Live coaching</p>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500">Hide</span>
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400 dark:text-slate-500">Live coaching</p>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-slate-500 dark:bg-slate-800 dark:text-slate-400">Hide</span>
               </div>
 
               <div className="mt-4 flex flex-wrap gap-2">
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Good structure</span>
-                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700">Clear examples</span>
-                <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700">Try to add more metrics</span>
-                <span className="rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700">Avoid filler words</span>
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">Good structure</span>
+                <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">Clear examples</span>
+                <span className="rounded-full bg-amber-100 px-3 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">Try to add more metrics</span>
+                <span className="rounded-full bg-rose-100 px-3 py-1 text-xs font-semibold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">Avoid filler words</span>
               </div>
 
               <div className="mt-6">
                 <div className="flex items-center gap-2">
-                  <p className="text-xs font-semibold text-slate-500">Interviewer&rsquo;s thoughts</p>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-500" aria-hidden="true">
+                  <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">Interviewer&rsquo;s thoughts</p>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-teal-500 dark:text-teal-300" aria-hidden="true">
                     <path d="M12 2l1.5 5L19 8l-4 3 1.5 6L12 14l-4.5 3L9 11 5 8l5.5-1z" />
                   </svg>
                 </div>
-                <p key={demoThoughtIndex} className="landing-fade mt-3 rounded-2xl bg-slate-50 p-4 text-xs leading-5 text-slate-600">
+                <p key={demoThoughtIndex} className="landing-fade mt-3 rounded-2xl bg-slate-50 p-4 text-xs leading-5 text-slate-600 dark:bg-slate-800/70 dark:text-slate-300">
                   {currentDemoThought}
                 </p>
               </div>
@@ -757,37 +767,37 @@ export default function LandingPage() {
 
       <section className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {FEATURE_TILES.map((tile) => (
-          <div key={tile.title} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <div key={tile.title} className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700 dark:bg-slate-900">
             <FeatureIcon kind={tile.icon} tone={tile.tone} />
             <div>
-              <p className="text-sm font-semibold text-ink">{tile.title}</p>
-              <p className="text-xs text-slate-500">{tile.body}</p>
+              <p className="text-sm font-semibold text-ink dark:text-white">{tile.title}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">{tile.body}</p>
             </div>
           </div>
         ))}
       </section>
 
-      <p className="mt-10 text-center text-xs text-slate-400">
+      <p className="mt-10 text-center text-xs text-slate-400 dark:text-slate-500">
         Looking for the final report later? Visit{" "}
-        <Link href="/results" className="font-semibold text-teal-700">
+        <Link href="/results" className="font-semibold text-teal-700 dark:text-teal-300">
           results
         </Link>{" "}
         after a session.
       </p>
 
       {showSetupModal ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/45 px-4 py-8 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/45 px-4 py-8 backdrop-blur-sm dark:bg-black/65">
           <div className="panel relative max-h-[calc(100vh-4rem)] w-full max-w-xl overflow-y-auto p-7">
             <button
               type="button"
               onClick={() => setShowSetupModal(false)}
-              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink"
+              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
               aria-label="Close start interview"
             >
               x
             </button>
-            <h2 className="text-2xl font-semibold text-ink">Start your interview</h2>
-            <p className="mt-1 text-sm text-slate-500">A few quick choices and we will set up your practice room.</p>
+            <h2 className="text-2xl font-semibold text-ink dark:text-white">Start your interview</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">A few quick choices and we will set up your practice room.</p>
 
             <form
               className="mt-6 space-y-5"
@@ -796,26 +806,57 @@ export default function LandingPage() {
                 void openDeviceDialog();
               }}
             >
-              <label className="block text-sm font-medium text-slate-700">
+              <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                 Job role
-                <select
-                  value={selectedRole}
-                  onChange={(event) => {
-                    setSelectedRole(event.target.value);
-                    setStartError(null);
-                  }}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
-                >
-                  {LANDING_JOB_ROLES.map((jobRole) => (
-                    <option key={jobRole} value={jobRole}>
-                      {jobRole}
-                    </option>
-                  ))}
-                </select>
-              </label>
+                <div ref={roleDropdownRef} className="relative mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setRoleDropdownOpen((o) => !o)}
+                    className="flex w-full items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 text-left text-sm text-ink transition focus:border-teal-400 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:focus:border-teal-400"
+                  >
+                    <span>{selectedRole}</span>
+                    <svg
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className={`h-4 w-4 shrink-0 text-slate-400 transition-transform duration-200 dark:text-slate-500 ${roleDropdownOpen ? "rotate-180" : ""}`}
+                      aria-hidden="true"
+                    >
+                      <polyline points="6 9 12 15 18 9" />
+                    </svg>
+                  </button>
+
+                  {roleDropdownOpen ? (
+                    <ul className="absolute z-20 mt-1 w-full overflow-hidden rounded-2xl border border-slate-200 bg-white py-1 shadow-lg dark:border-slate-600 dark:bg-slate-800">
+                      {LANDING_JOB_ROLES.map((jobRole) => (
+                        <li key={jobRole}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSelectedRole(jobRole);
+                              setRoleDropdownOpen(false);
+                              setStartError(null);
+                            }}
+                            className={`w-full px-4 py-2.5 text-left text-sm transition-colors ${
+                              selectedRole === jobRole
+                                ? "bg-slate-100 font-medium text-teal-700 dark:bg-slate-700 dark:text-teal-300"
+                                : "text-ink hover:bg-slate-100 dark:text-slate-200 dark:hover:bg-slate-700"
+                            }`}
+                          >
+                            {jobRole}
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              </span>
 
               {selectedRole === "Other" ? (
-                <label className="block text-sm font-medium text-slate-700">
+                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                   Custom job role
                   <input
                     value={customRole}
@@ -824,21 +865,21 @@ export default function LandingPage() {
                       setStartError(null);
                     }}
                     placeholder="Example: Healthcare Data Scientist"
-                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
+                    className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:placeholder-slate-500"
                   />
                 </label>
               ) : null}
 
               <fieldset className="space-y-3">
-                <legend className="text-sm font-medium text-slate-700">Question difficulty</legend>
+                <legend className="text-sm font-medium text-slate-700 dark:text-slate-300">Question difficulty</legend>
                 <div className="grid gap-3 sm:grid-cols-3">
                   {(["Easy", "Medium", "Hard"] as InterviewDifficulty[]).map((option) => (
                     <label
                       key={option}
                       className={`cursor-pointer rounded-2xl border px-4 py-3 text-center text-sm font-semibold transition ${
                         difficulty === option
-                          ? "border-teal-500 bg-teal-50 text-teal-800"
-                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                          ? "border-teal-500 bg-teal-50 text-teal-800 dark:border-teal-400 dark:bg-teal-900/40 dark:text-teal-200"
+                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-500"
                       }`}
                     >
                       <input
@@ -855,10 +896,12 @@ export default function LandingPage() {
               </fieldset>
 
               <fieldset className="space-y-3">
-                <legend className="text-sm font-medium text-slate-700">Resume option</legend>
+                <legend className="text-sm font-medium text-slate-700 dark:text-slate-300">Resume option</legend>
                 <label
                   className={`block cursor-pointer rounded-2xl border px-4 py-4 transition ${
-                    uploadedResumeName ? "border-teal-500 bg-teal-50" : "border-slate-200 bg-white hover:border-slate-300"
+                    uploadedResumeName
+                      ? "border-teal-500 bg-teal-50 dark:border-teal-400 dark:bg-teal-900/30"
+                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
                   }`}
                 >
                   <input
@@ -874,16 +917,16 @@ export default function LandingPage() {
                   />
                   <span className="flex items-start justify-between gap-4">
                     <span>
-                      <span className="block font-medium text-ink">Upload resume</span>
-                      <span className="mt-1 block text-sm text-slate-500">
+                      <span className="block font-medium text-ink dark:text-white">Upload resume</span>
+                      <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
                         {uploadedResumeName || "Add your own resume for a more personalized interview later."}
                       </span>
                     </span>
-                    <span className="rounded-full bg-teal-100 px-3 py-1 text-xs font-semibold text-teal-700">Recommended</span>
+                    <span className="rounded-full bg-teal-100 px-3 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-900/50 dark:text-teal-200">Recommended</span>
                   </span>
                 </label>
 
-                <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 transition hover:border-slate-300">
+                <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 transition hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500">
                   <input
                     checked={resumeMode === "Skip Resume" && !uploadedResumeName}
                     onChange={() => {
@@ -895,22 +938,22 @@ export default function LandingPage() {
                     className="mt-1"
                   />
                   <span>
-                    <span className="block font-medium text-ink">Skip resume</span>
-                    <span className="mt-1 block text-sm text-slate-500">Run the interview without resume context.</span>
+                    <span className="block font-medium text-ink dark:text-white">Skip resume</span>
+                    <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">Run the interview without resume context.</span>
                   </span>
                 </label>
               </fieldset>
 
-              <p className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-slate-500">
+              <p className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800/70 dark:text-slate-400">
                 Next step: pick the microphone and camera you want to use during the interview.
               </p>
 
-              {startError ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-900">{startError}</p> : null}
+              {startError ? <p className="rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:bg-rose-900/40 dark:text-rose-200">{startError}</p> : null}
 
               <button
                 type="submit"
                 disabled={isStarting || isCheckingMedia}
-                className="w-full rounded-2xl bg-ink px-5 py-3 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                className="w-full rounded-2xl bg-ink px-5 py-3 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-teal-500 dark:text-white dark:hover:bg-teal-400"
               >
                 {startButtonLabel}
               </button>
@@ -920,17 +963,17 @@ export default function LandingPage() {
       ) : null}
 
       {showDeviceDialog ? (
-        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/45 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-panel">
+        <div className="fixed inset-0 z-50 grid place-items-center bg-ink/45 px-4 backdrop-blur-sm dark:bg-black/65">
+          <div className="w-full max-w-lg rounded-3xl bg-white p-6 shadow-panel dark:bg-slate-900">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold text-ink">Choose interview devices</h2>
-                <p className="mt-2 text-sm text-slate-600">Camera and microphone access is ready.</p>
+                <h2 className="text-xl font-semibold text-ink dark:text-white">Choose interview devices</h2>
+                <p className="mt-2 text-sm text-slate-600 dark:text-slate-400">Camera and microphone access is ready.</p>
               </div>
               <button
                 type="button"
                 onClick={() => setShowDeviceDialog(false)}
-                className="grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink"
+                className="grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
                 aria-label="Close device selection"
               >
                 x
@@ -938,12 +981,12 @@ export default function LandingPage() {
             </div>
 
             <div className="mt-6 space-y-4">
-              <label className="block text-sm font-medium text-slate-700">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                 Microphone
                 <select
                   value={selectedAudioDeviceId}
                   onChange={(event) => setSelectedAudioDeviceId(event.target.value)}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:[color-scheme:dark]"
                 >
                   {audioDevices.map((device, index) => (
                     <option key={device.deviceId || index} value={device.deviceId}>
@@ -953,12 +996,12 @@ export default function LandingPage() {
                 </select>
               </label>
 
-              <label className="block text-sm font-medium text-slate-700">
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
                 Camera
                 <select
                   value={selectedVideoDeviceId}
                   onChange={(event) => setSelectedVideoDeviceId(event.target.value)}
-                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400"
+                  className="mt-2 w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-teal-400 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:[color-scheme:dark]"
                 >
                   {videoDevices.map((device, index) => (
                     <option key={device.deviceId || index} value={device.deviceId}>
@@ -969,13 +1012,13 @@ export default function LandingPage() {
               </label>
             </div>
 
-            {startError ? <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-900">{startError}</p> : null}
+            {startError ? <p className="mt-4 rounded-2xl bg-rose-50 px-4 py-3 text-sm text-rose-900 dark:bg-rose-900/40 dark:text-rose-200">{startError}</p> : null}
 
             <div className="mt-6 flex flex-col-reverse gap-3 sm:flex-row sm:justify-end">
               <button
                 type="button"
                 onClick={() => setShowDeviceDialog(false)}
-                className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                className="rounded-2xl border border-slate-200 px-5 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800"
               >
                 Cancel
               </button>
@@ -983,7 +1026,7 @@ export default function LandingPage() {
                 type="button"
                 onClick={() => void confirmDevicesAndStart()}
                 disabled={isStarting}
-                className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70"
+                className="rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-teal-500 dark:text-white dark:hover:bg-teal-400"
               >
                 {isStarting ? "Preparing..." : "Use these devices"}
               </button>
@@ -993,21 +1036,21 @@ export default function LandingPage() {
       ) : null}
 
       {showPreparationOverlay ? (
-        <div className="fixed inset-0 z-[60] grid place-items-center bg-ink/55 px-4 backdrop-blur-sm">
-          <div className="w-full max-w-md rounded-3xl bg-white p-7 shadow-panel">
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700">Preparing interview</p>
-            <h2 className="mt-4 text-2xl font-semibold text-ink">{PREPARATION_STEPS[preparationStepIndex]}</h2>
-            <p className="mt-3 text-sm leading-6 text-slate-600">
+        <div className="fixed inset-0 z-[60] grid place-items-center bg-ink/55 px-4 backdrop-blur-sm dark:bg-black/70">
+          <div className="w-full max-w-md rounded-3xl bg-white p-7 shadow-panel dark:bg-slate-900">
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700 dark:text-teal-300">Preparing interview</p>
+            <h2 className="mt-4 text-2xl font-semibold text-ink dark:text-white">{PREPARATION_STEPS[preparationStepIndex]}</h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
               Your interview environment is being generated in the background.
             </p>
 
-            <div className="mt-7 h-3 overflow-hidden rounded-full bg-slate-100">
+            <div className="mt-7 h-3 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
               <div
-                className="h-full rounded-full bg-teal-600 transition-[width] duration-150 ease-out"
+                className="h-full rounded-full bg-teal-600 transition-[width] duration-150 ease-out dark:bg-teal-400"
                 style={{ width: `${preparationProgress}%` }}
               />
             </div>
-            <div className="mt-3 flex items-center justify-between text-xs font-semibold text-slate-500">
+            <div className="mt-3 flex items-center justify-between text-xs font-semibold text-slate-500 dark:text-slate-400">
               <span>{preparationProgress}%</span>
               <span>{preparationStepIndex + 1} of {PREPARATION_STEPS.length}</span>
             </div>
@@ -1025,7 +1068,9 @@ function NavButton({ id, label, active, onClick }: { id: PopoverId; label: strin
       onClick={() => onClick(id)}
       aria-expanded={active}
       className={`rounded-full px-4 py-2 text-sm font-medium transition ${
-        active ? "bg-slate-100 text-ink" : "text-slate-600 hover:bg-slate-100 hover:text-ink"
+        active
+          ? "bg-slate-100 text-ink dark:bg-slate-800 dark:text-white"
+          : "text-slate-600 hover:bg-slate-100 hover:text-ink dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
       }`}
     >
       {label}

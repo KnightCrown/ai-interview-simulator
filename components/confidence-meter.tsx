@@ -14,10 +14,10 @@ export function ConfidenceMeter({ value, label = "Live confidence" }: Confidence
   return (
     <div className="panel p-5">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">{label}</p>
-        <span className="text-2xl font-semibold text-ink">{value}</span>
+        <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">{label}</p>
+        <span className="text-2xl font-semibold text-ink dark:text-white">{value}</span>
       </div>
-      <div className="mt-4 h-4 overflow-hidden rounded-full bg-slate-200">
+      <div className="mt-4 h-4 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
         <div
           className={`h-full rounded-full bg-gradient-to-r ${tone} transition-all duration-500 ease-out`}
           style={{ width: `${Math.max(6, value)}%` }}

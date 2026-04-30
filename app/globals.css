@@ -4,6 +4,12 @@
 
 :root {
   color-scheme: light;
+  --ring-track: #eef2f7;
+}
+
+html.dark {
+  color-scheme: dark;
+  --ring-track: #334155;
 }
 
 body {
@@ -14,10 +20,23 @@ body {
     linear-gradient(180deg, #f8fbfd 0%, #eef3f8 100%);
 }
 
+html.dark body {
+  @apply text-slate-100;
+  background-color: #050a14;
+  background-image:
+    radial-gradient(circle at top left, rgba(20, 184, 166, 0.18), transparent 32%),
+    radial-gradient(circle at bottom right, rgba(245, 158, 11, 0.10), transparent 26%),
+    linear-gradient(180deg, #0b1220 0%, #050a14 100%);
+}
+
 * {
   box-sizing: border-box;
 }
 
 .panel {
   @apply rounded-3xl border border-slate-200/80 bg-white/90 shadow-panel backdrop-blur;
+}
+
+html.dark .panel {
+  @apply border-slate-700/60 bg-slate-900/85;
 }

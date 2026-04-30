@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackPanel, type CoachingThought } from "@/components/feedback-panel";
 import { Avatar2D } from "@/components/avatar-2d";
 import { TypingQuestion } from "@/components/typing-question";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { TechSpecsButton } from "@/components/tech-specs-button";
 import {
   AnswerEvaluation,
   CandidateMoodSnapshot,
@@ -668,17 +670,17 @@ export default function InterviewPage() {
   };
 
   return (
-    <main className="min-h-screen bg-[#f7f9fc] text-ink">
+    <main className="min-h-screen bg-[#f7f9fc] text-ink dark:bg-slate-950 dark:text-slate-100">
 
-      <header className="border-b border-slate-200/80 bg-white/90 px-5 py-4 backdrop-blur">
+      <header className="border-b border-slate-200/80 bg-white/90 px-5 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
         <div className="mx-auto flex max-w-[118rem] flex-col gap-4 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:items-center">
           <div className="flex items-center gap-4">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-ink text-sm font-bold text-white">AI</div>
-            <h1 className="text-base font-semibold sm:text-lg">{session.role} Simulation</h1>
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-ink text-sm font-bold text-white dark:bg-white dark:text-ink">AI</div>
+            <h1 className="text-base font-semibold sm:text-lg dark:text-white">{session.role} Simulation</h1>
           </div>
 
           <div className="justify-self-center text-center">
-            <p className="text-sm font-medium">Question {currentQuestionNumber} of {totalQuestions}</p>
+            <p className="text-sm font-medium dark:text-slate-200">Question {currentQuestionNumber} of {totalQuestions}</p>
             <div className="mt-3 flex items-center justify-center gap-3">
               {Array.from({ length: totalQuestions }).map((_, index) => {
                 const step = index + 1;
@@ -686,9 +688,9 @@ export default function InterviewPage() {
 
                 return (
                   <div key={step} className="flex items-center gap-3">
-                    <span className={`h-3 w-3 rounded-full ${isActive ? "bg-teal-600" : "bg-slate-200"}`} />
+                    <span className={`h-3 w-3 rounded-full ${isActive ? "bg-teal-600 dark:bg-teal-400" : "bg-slate-200 dark:bg-slate-700"}`} />
                     {step < totalQuestions ? (
-                      <span className={`h-1 w-14 rounded-full ${step < currentQuestionNumber ? "bg-teal-600" : "bg-slate-200"}`} />
+                      <span className={`h-1 w-14 rounded-full ${step < currentQuestionNumber ? "bg-teal-600 dark:bg-teal-400" : "bg-slate-200 dark:bg-slate-700"}`} />
                     ) : null}
                   </div>
                 );
@@ -696,33 +698,35 @@ export default function InterviewPage() {
             </div>
           </div>
 
-          <div className="flex justify-start lg:justify-end">
+          <div className="flex items-center gap-3 justify-start lg:justify-end">
+            <TechSpecsButton variant="header" />
             <button
               type="button"
               onClick={endInterview}
-              className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-red-600 shadow-sm transition hover:border-red-200 hover:bg-red-50"
+              className="rounded-xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-red-600 shadow-sm transition hover:border-red-200 hover:bg-red-50 dark:border-slate-700 dark:bg-slate-800 dark:text-rose-300 dark:hover:border-rose-500/40 dark:hover:bg-rose-900/30"
             >
               End interview
             </button>
+            <ThemeToggle />
           </div>
         </div>
       </header>
 
       <div className="mx-auto grid max-w-[124rem] gap-6 px-5 py-8 lg:grid-cols-[16rem_minmax(0,68rem)_24rem]">
-        <aside className="rounded-2xl border border-slate-200 bg-white p-6 shadow-panel lg:sticky lg:top-8 lg:h-[calc(100vh-7rem)] lg:overflow-y-auto">
-          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Live insights</p>
+        <aside className="rounded-2xl border border-slate-200 bg-white p-6 shadow-panel dark:border-slate-700 dark:bg-slate-900 lg:sticky lg:top-8 lg:h-[calc(100vh-7rem)] lg:overflow-y-auto">
+          <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Live insights</p>
 
           <div className="mt-5">
-            <p className="text-sm font-semibold">Confidence</p>
+            <p className="text-sm font-semibold dark:text-white">Confidence</p>
             <div className="mt-3 flex items-center gap-5">
               <div
                 className="grid h-24 w-24 shrink-0 place-items-center rounded-full transition-[background] duration-300 ease-out"
-                style={{ background: `conic-gradient(${getConfidenceColor(displayedConfidence)} ${displayedConfidence * 3.6}deg, #eef2f7 0deg)` }}
+                style={{ background: `conic-gradient(${getConfidenceColor(displayedConfidence)} ${displayedConfidence * 3.6}deg, var(--ring-track, #eef2f7) 0deg)` }}
               >
-                <div className="h-16 w-16 rounded-full bg-white" />
+                <div className="h-16 w-16 rounded-full bg-white dark:bg-slate-900" />
               </div>
               <div>
-                <p className="text-4xl font-semibold">{displayedConfidence}<span className="text-base font-medium text-slate-400"> /100</span></p>
+                <p className="text-4xl font-semibold dark:text-white">{displayedConfidence}<span className="text-base font-medium text-slate-400 dark:text-slate-500"> /100</span></p>
                 <p className="mt-2 text-sm font-semibold" style={{ color: getConfidenceColor(displayedConfidence) }}>
                   {displayedConfidence >= 70 ? "Strong" : displayedConfidence >= 30 ? "Good" : "Warming up"}
                 </p>
@@ -734,14 +738,14 @@ export default function InterviewPage() {
               aria-pressed={showOverlay}
               className={`mt-5 w-full rounded-xl border px-4 py-2 text-sm font-semibold transition ${
                 showOverlay
-                  ? "border-teal-300 bg-teal-50 text-teal-700"
-                  : "border-slate-200 bg-white text-slate-600 hover:border-teal-200 hover:text-teal-700"
+                  ? "border-teal-300 bg-teal-50 text-teal-700 dark:border-teal-500/40 dark:bg-teal-900/30 dark:text-teal-200"
+                  : "border-slate-200 bg-white text-slate-600 hover:border-teal-200 hover:text-teal-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-teal-400/40 dark:hover:text-teal-200"
               }`}
             >
               {showOverlay ? "Overlay on" : "Overlay"}
             </button>
 
-            <p className="mt-5 text-sm text-slate-500">Eye Contact: {displayedEyeContact}</p>
+            <p className="mt-5 text-sm text-slate-500 dark:text-slate-400">Eye Contact: {displayedEyeContact}</p>
 
             <div className="mt-4 space-y-2" aria-live="polite" aria-label="Facial expression breakdown">
               {(
@@ -756,40 +760,40 @@ export default function InterviewPage() {
                 const isActive = displayedCandidateMood === key;
                 return (
                   <div key={key} className="flex items-center gap-2">
-                    <span className={`w-14 shrink-0 text-xs capitalize ${isActive ? "font-semibold text-ink" : "text-slate-400"}`}>
+                    <span className={`w-14 shrink-0 text-xs capitalize ${isActive ? "font-semibold text-ink dark:text-white" : "text-slate-400 dark:text-slate-500"}`}>
                       {key}
                     </span>
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
                       <div
                         className="h-1.5 rounded-full transition-[width] duration-500 ease-out"
                         style={{ width: `${score}%`, backgroundColor: isActive ? color : "#cbd5e1" }}
                       />
                     </div>
-                    <span className="w-6 shrink-0 text-right text-xs text-slate-400">{score}</span>
+                    <span className="w-6 shrink-0 text-right text-xs text-slate-400 dark:text-slate-500">{score}</span>
                   </div>
                 );
               })}
             </div>
           </div>
 
-          <div className="mt-5 space-y-4 border-t border-slate-200 pt-5">
+          <div className="mt-5 space-y-4 border-t border-slate-200 pt-5 dark:border-slate-800">
             <div>
-              <p className="text-sm font-semibold">Words per Min</p>
-              <p className="mt-1.5 text-3xl font-semibold">{speechMetrics.speakingPace}</p>
-              <p className="mt-0.5 text-sm text-slate-500">{speakingPaceLabel}</p>
+              <p className="text-sm font-semibold dark:text-white">Words per Min</p>
+              <p className="mt-1.5 text-3xl font-semibold dark:text-white">{speechMetrics.speakingPace}</p>
+              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">{speakingPaceLabel}</p>
             </div>
 
-            <div className="border-t border-slate-200 pt-4">
-              <p className="text-sm font-semibold">Speaking time</p>
-              <p className="mt-1.5 text-3xl font-semibold">{formatTime(elapsedSeconds)}</p>
-              <p className="mt-0.5 text-sm text-slate-500">min</p>
+            <div className="border-t border-slate-200 pt-4 dark:border-slate-800">
+              <p className="text-sm font-semibold dark:text-white">Speaking time</p>
+              <p className="mt-1.5 text-3xl font-semibold dark:text-white">{formatTime(elapsedSeconds)}</p>
+              <p className="mt-0.5 text-sm text-slate-500 dark:text-slate-400">min</p>
             </div>
 
-            <div className="border-t border-slate-200 pt-4">
-              <p className="text-sm font-semibold">Filler Words</p>
-              <p className="mt-1.5 text-3xl font-semibold">{speechMetrics.fillerCount}</p>
+            <div className="border-t border-slate-200 pt-4 dark:border-slate-800">
+              <p className="text-sm font-semibold dark:text-white">Filler Words</p>
+              <p className="mt-1.5 text-3xl font-semibold dark:text-white">{speechMetrics.fillerCount}</p>
               {repeatedFillerWords.length > 0 ? (
-                <p className="mt-1 text-sm text-slate-500">
+                <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
                   {repeatedFillerWords.map((item) => `${item.word} (${item.count})`).join(", ")}
                 </p>
               ) : null}
@@ -983,40 +987,40 @@ export default function InterviewPage() {
             </div>
           </div>
 
-          <div className="mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-panel">
+          <div className="mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-panel dark:border-slate-700 dark:bg-slate-900">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500">Interviewer question</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Interviewer question</p>
               <div className="mt-3 flex items-start justify-between gap-5">
-                <p className="text-justify text-[1.1rem] font-medium leading-[1.45rem] text-ink">
+                <p className="text-justify text-[1.1rem] font-medium leading-[1.45rem] text-ink dark:text-white">
                   <TypingQuestion text={session.currentQuestion ?? "Preparing next question..."} />
                 </p>
                 {showTranscript ? (
-                  <p className="shrink-0 whitespace-nowrap text-[1.1rem] font-medium leading-[1.45rem] text-ink">
+                  <p className="shrink-0 whitespace-nowrap text-[1.1rem] font-medium leading-[1.45rem] text-ink dark:text-white">
                     {formatTime(answerSecondsRemaining)}
                   </p>
                 ) : null}
               </div>
             </div>
 
-            <div className="mt-6 border-t border-slate-200 pt-5">
-              <p className="min-h-20 whitespace-pre-wrap text-sm leading-7 text-slate-700">
+            <div className="mt-6 border-t border-slate-200 pt-5 dark:border-slate-800">
+              <p className="min-h-20 whitespace-pre-wrap text-sm leading-7 text-slate-700 dark:text-slate-300">
                 {visibleTranscript || transcriptPlaceholder}
               </p>
             </div>
 
             <div className="mt-4 flex flex-col items-end">
-              {submitError ? <p className="mb-3 text-sm font-medium text-red-600">{submitError}</p> : null}
+              {submitError ? <p className="mb-3 text-sm font-medium text-red-600 dark:text-rose-300">{submitError}</p> : null}
               <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:flex-row sm:items-center">
                 <button
                   type="button"
                   onClick={() => void submitAnswer()}
                   disabled={!showTranscript || isSubmitting}
-                  className="min-h-11 w-full rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300 sm:w-44"
+                  className="min-h-11 w-full rounded-xl bg-teal-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-700 disabled:cursor-not-allowed disabled:bg-slate-300 dark:disabled:bg-slate-700 dark:disabled:text-slate-500 sm:w-44"
                 >
                   {isSubmitting ? "Evaluating..." : "Submit early"}
                 </button>
               </div>
-              {!speechIsSupported ? <p className="mt-3 text-sm text-slate-500">Speech recognition is not supported in this browser.</p> : null}
+              {!speechIsSupported ? <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">Speech recognition is not supported in this browser.</p> : null}
             </div>
           </div>
         </section>
@@ -1025,7 +1029,7 @@ export default function InterviewPage() {
           <button
             type="button"
             onClick={() => setShowCoaching((current) => !current)}
-            className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold shadow-panel transition hover:border-teal-200 hover:text-teal-700"
+            className="w-full rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm font-semibold shadow-panel transition hover:border-teal-200 hover:text-teal-700 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:border-teal-400/40 dark:hover:text-teal-200"
           >
             {showCoaching ? "Hide coaching" : "Show coaching"}
           </button>

@@ -86,7 +86,7 @@ export const Avatar2D = memo(function Avatar2D({
       type="button"
       onClick={onClick}
       aria-label={title ?? "AI interviewer"}
-      className={`relative overflow-hidden rounded-[1.8rem] border border-slate-200 bg-slate-950 text-left shadow-panel ${onClick ? "" : "cursor-default"} ${className}`}
+      className={`relative overflow-hidden rounded-[1.8rem] border border-slate-200 bg-slate-950 text-left shadow-panel dark:border-slate-700 ${onClick ? "" : "cursor-default"} ${className}`}
     >
       <div className={compact ? "relative h-full min-h-[180px] w-full" : "relative h-full min-h-[360px] w-full"}>
         {/* Base (mouth closed) frame — always visible */}

@@ -4,6 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FinalReport, FunnelOutcome } from "@/lib/interview-types";
 import { useInterviewSession } from "@/lib/session-store";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { TechSpecsButton } from "@/components/tech-specs-button";
 
 type OutcomeTone = {
   label: string;
@@ -176,14 +178,14 @@ function ScoreCard({ label, value, onInfo }: { label: keyof typeof SCORE_COLORS;
   const score = scoreToTen(value);
 
   return (
-    <div className="relative rounded-2xl bg-slate-50 px-5 py-5 shadow-sm">
+    <div className="relative rounded-2xl bg-slate-50 px-5 py-5 shadow-sm dark:bg-slate-800/70">
       <div className="flex items-start justify-between gap-1">
-        <p className="flex-1 text-center text-sm font-semibold text-ink">{label}</p>
+        <p className="flex-1 text-center text-sm font-semibold text-ink dark:text-white">{label}</p>
         <button
           type="button"
           onClick={onInfo}
           aria-label={`Learn what affects your ${label} score`}
-          className="shrink-0 grid h-5 w-5 place-items-center rounded-full border border-slate-300 text-[10px] font-bold text-slate-400 transition hover:border-slate-400 hover:text-slate-600"
+          className="shrink-0 grid h-5 w-5 place-items-center rounded-full border border-slate-300 text-[10px] font-bold text-slate-400 transition hover:border-slate-400 hover:text-slate-600 dark:border-slate-600 dark:text-slate-400 dark:hover:border-slate-400 dark:hover:text-slate-200"
         >
           i
         </button>
@@ -191,13 +193,13 @@ function ScoreCard({ label, value, onInfo }: { label: keyof typeof SCORE_COLORS;
       <div className="mt-4 flex items-center justify-center gap-4">
         <div
           className="grid h-16 w-16 shrink-0 place-items-center rounded-full"
-          style={{ background: `conic-gradient(${color} ${value * 3.6}deg, #edf2f7 0deg)` }}
+          style={{ background: `conic-gradient(${color} ${value * 3.6}deg, var(--ring-track) 0deg)` }}
         >
-          <div className="h-10 w-10 rounded-full bg-white" />
+          <div className="h-10 w-10 rounded-full bg-white dark:bg-slate-900" />
         </div>
         <div>
-          <p className="text-3xl font-semibold text-ink">{score.toFixed(1)}</p>
-          <p className="text-sm text-slate-500">/ 10</p>
+          <p className="text-3xl font-semibold text-ink dark:text-white">{score.toFixed(1)}</p>
+          <p className="text-sm text-slate-500 dark:text-slate-400">/ 10</p>
         </div>
       </div>
       <p className="mt-4 text-center text-sm font-medium" style={{ color }}>
@@ -212,12 +214,12 @@ function ListItem({ item, description, tone }: { item: string; description: stri
 
   return (
     <div className="flex gap-4">
-      <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl ${isGood ? "bg-teal-50 text-teal-700" : "bg-rose-50 text-rose-600"}`}>
+      <div className={`grid h-10 w-10 shrink-0 place-items-center rounded-2xl ${isGood ? "bg-teal-50 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300" : "bg-rose-50 text-rose-600 dark:bg-rose-900/30 dark:text-rose-300"}`}>
         <SummaryIcon name={isGood ? "check" : "trend"} />
       </div>
       <div>
-        <p className="font-semibold text-ink">{item}</p>
-        <p className="mt-1 text-sm leading-6 text-slate-500">{description}</p>
+        <p className="font-semibold text-ink dark:text-white">{item}</p>
+        <p className="mt-1 text-sm leading-6 text-slate-500 dark:text-slate-400">{description}</p>
       </div>
     </div>
   );
@@ -314,32 +316,36 @@ export default function ResultsPage() {
   };
 
   return (
-    <main className="min-h-screen px-4 py-6 text-ink sm:px-6">
-      <div className="mx-auto max-w-7xl rounded-3xl border border-slate-200/80 bg-white/85 p-5 shadow-panel backdrop-blur sm:p-6">
+    <main className="min-h-screen px-4 py-6 text-ink sm:px-6 dark:text-slate-100">
+      <div className="relative z-0 mx-auto max-w-7xl rounded-3xl border border-slate-200/80 bg-white/85 p-5 shadow-panel backdrop-blur sm:p-6 dark:border-slate-700 dark:bg-slate-900/85">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-4">
-            <div className="grid h-10 w-10 place-items-center rounded-xl bg-ink text-sm font-bold text-white">AI</div>
-            <h1 className="text-2xl font-semibold">Interview Summary</h1>
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-ink text-sm font-bold text-white dark:bg-white dark:text-ink">AI</div>
+            <h1 className="text-2xl font-semibold dark:text-white">Interview Summary</h1>
           </div>
-          <button
-            type="button"
-            onClick={startNewSession}
-            className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-ink shadow-sm transition hover:border-teal-200 hover:text-teal-700"
-          >
-            Start a new session
-          </button>
+          <div className="flex items-center gap-3">
+            <TechSpecsButton variant="header" />
+            <button
+              type="button"
+              onClick={startNewSession}
+              className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-ink shadow-sm transition hover:border-teal-200 hover:text-teal-700 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:border-teal-400/40 dark:hover:text-teal-200"
+            >
+              Start a new session
+            </button>
+            <ThemeToggle />
+          </div>
         </header>
 
         {isLoading || !report ? (
-          <div className="mt-6 rounded-3xl border border-slate-200 bg-white px-8 py-10">
-            <p className="text-lg font-semibold text-ink">Generating your interview report…</p>
-            <p className="mt-1.5 h-5 text-sm text-slate-500 transition-opacity duration-500">
+          <div className="mt-6 rounded-3xl border border-slate-200 bg-white px-8 py-10 dark:border-slate-700 dark:bg-slate-900">
+            <p className="text-lg font-semibold text-ink dark:text-white">Generating your interview report…</p>
+            <p className="mt-1.5 h-5 text-sm text-slate-500 transition-opacity duration-500 dark:text-slate-400">
               {LOADING_MESSAGES[loadingMessageIndex]}
             </p>
 
-            <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-slate-100">
+            <div className="mt-6 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
               <div
-                className="h-full rounded-full bg-teal-500 transition-[width] duration-500 ease-out"
+                className="h-full rounded-full bg-teal-500 transition-[width] duration-500 ease-out dark:bg-teal-400"
                 style={{ width: `${loadingProgress}%` }}
               />
             </div>
@@ -352,8 +358,8 @@ export default function ResultsPage() {
                     key={label}
                     className={`rounded-xl border px-3 py-2 text-center text-xs font-medium transition-colors duration-500 ${
                       filled
-                        ? "border-teal-200 bg-teal-50 text-teal-700"
-                        : "border-slate-100 bg-slate-50 text-slate-400"
+                        ? "border-teal-200 bg-teal-50 text-teal-700 dark:border-teal-500/40 dark:bg-teal-900/30 dark:text-teal-200"
+                        : "border-slate-100 bg-slate-50 text-slate-400 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-500"
                     }`}
                   >
                     {label}
@@ -393,8 +399,8 @@ export default function ResultsPage() {
               );
             })()}
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-6">
-              <p className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">Score breakdown</p>
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+              <p className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Score breakdown</p>
               <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                 {(["Overall", "Clarity", "Relevance", "Confidence", "Engagement"] as const).map((label) => (
                   <ScoreCard
@@ -412,26 +418,26 @@ export default function ResultsPage() {
               {activeInfo ? (
                 <div
                   ref={infoPanelRef}
-                  className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5"
+                  className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/70"
                 >
                   <div className="flex items-start justify-between gap-4">
                     <div>
-                      <p className="text-sm font-bold text-ink">{activeInfo}</p>
-                      <p className="mt-1 text-sm text-slate-500">{SCORE_INFO[activeInfo].headline}</p>
+                      <p className="text-sm font-bold text-ink dark:text-white">{activeInfo}</p>
+                      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">{SCORE_INFO[activeInfo].headline}</p>
                     </div>
                     <button
                       type="button"
                       onClick={() => setActiveInfo(null)}
                       aria-label="Close"
-                      className="shrink-0 grid h-7 w-7 place-items-center rounded-full border border-slate-200 bg-white text-xs text-slate-400 transition hover:border-slate-300 hover:text-slate-600"
+                      className="shrink-0 grid h-7 w-7 place-items-center rounded-full border border-slate-200 bg-white text-xs text-slate-400 transition hover:border-slate-300 hover:text-slate-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-400 dark:hover:border-slate-400 dark:hover:text-slate-200"
                     >
                       ✕
                     </button>
                   </div>
                   <ul className="mt-4 space-y-2.5">
                     {SCORE_INFO[activeInfo].tips.map((tip) => (
-                      <li key={tip} className="flex gap-3 text-sm leading-6 text-slate-600">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400" />
+                      <li key={tip} className="flex gap-3 text-sm leading-6 text-slate-600 dark:text-slate-300">
+                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-slate-400 dark:bg-slate-500" />
                         {tip}
                       </li>
                     ))}
@@ -440,21 +446,21 @@ export default function ResultsPage() {
               ) : null}
             </section>
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7">
+            <section className="rounded-3xl border border-slate-200 bg-white p-6 sm:p-7 dark:border-slate-700 dark:bg-slate-900">
               <div className="flex gap-5">
-                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-sky-50 text-sky-600">
+                <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-sky-50 text-sky-600 dark:bg-sky-900/40 dark:text-sky-300">
                   <SummaryIcon name="message" />
                 </div>
                 <div>
-                  <p className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500">Interviewer notes</p>
-                  <p className="mt-3 text-base leading-8 text-slate-700">{interviewerNotes}</p>
+                  <p className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Interviewer notes</p>
+                  <p className="mt-3 text-base leading-8 text-slate-700 dark:text-slate-300">{interviewerNotes}</p>
                 </div>
               </div>
             </section>
 
-            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+            <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
               {/* Tab bar */}
-              <div className="flex border-b border-slate-200">
+              <div className="flex border-b border-slate-200 dark:border-slate-700">
                 {(
                   [
                     { id: "feedback",      label: "Feedback" },
@@ -468,8 +474,8 @@ export default function ResultsPage() {
                     onClick={() => setActiveTab(id)}
                     className={`flex-1 px-4 py-4 text-sm font-semibold transition-colors ${
                       activeTab === id
-                        ? "border-b-2 border-teal-600 text-teal-700"
-                        : "text-slate-500 hover:text-ink"
+                        ? "border-b-2 border-teal-600 text-teal-700 dark:border-teal-400 dark:text-teal-300"
+                        : "text-slate-500 hover:text-ink dark:text-slate-400 dark:hover:text-white"
                     }`}
                   >
                     {label}
@@ -479,22 +485,34 @@ export default function ResultsPage() {
 
               {/* Feedback tab */}
               {activeTab === "feedback" ? (
-                <div className="grid divide-y divide-slate-200 lg:grid-cols-2 lg:divide-x lg:divide-y-0">
+                <div className="grid divide-y divide-slate-200 lg:grid-cols-2 lg:divide-x lg:divide-y-0 dark:divide-slate-700">
                   <section className="p-6 sm:p-7">
-                    <h2 className="text-lg font-semibold text-ink">What you did well</h2>
-                    <div className="mt-6 space-y-7">
-                      {report.strengths.map((item, index) => (
-                        <ListItem key={item} item={item} description={report.strengthDescriptions[index] ?? ""} tone="good" />
-                      ))}
-                    </div>
+                    <h2 className="text-lg font-semibold text-ink dark:text-white">What you did well</h2>
+                    {report.strengths.length === 0 ? (
+                      <p className="mt-6 text-sm leading-7 text-slate-500 dark:text-slate-400">
+                        No feedback available — answer at least one question to generate strengths.
+                      </p>
+                    ) : (
+                      <div className="mt-6 space-y-7">
+                        {report.strengths.map((item, index) => (
+                          <ListItem key={item} item={item} description={report.strengthDescriptions[index] ?? ""} tone="good" />
+                        ))}
+                      </div>
+                    )}
                   </section>
                   <section className="p-6 sm:p-7">
-                    <h2 className="text-lg font-semibold text-ink">What to improve</h2>
-                    <div className="mt-6 space-y-7">
-                      {report.weaknesses.map((item, index) => (
-                        <ListItem key={item} item={item} description={report.weaknessDescriptions[index] ?? ""} tone="improve" />
-                      ))}
-                    </div>
+                    <h2 className="text-lg font-semibold text-ink dark:text-white">What to improve</h2>
+                    {report.weaknesses.length === 0 ? (
+                      <p className="mt-6 text-sm leading-7 text-slate-500 dark:text-slate-400">
+                        No feedback available — answer at least one question to generate areas to improve.
+                      </p>
+                    ) : (
+                      <div className="mt-6 space-y-7">
+                        {report.weaknesses.map((item, index) => (
+                          <ListItem key={item} item={item} description={report.weaknessDescriptions[index] ?? ""} tone="improve" />
+                        ))}
+                      </div>
+                    )}
                   </section>
                 </div>
               ) : null}
@@ -503,21 +521,21 @@ export default function ResultsPage() {
               {activeTab === "opportunities" ? (
                 <div className="p-6 sm:p-7">
                   <div className="flex gap-4">
-                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-violet-50 text-violet-700">
+                    <div className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-violet-50 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300">
                       <SummaryIcon name="spark" />
                     </div>
-                    <p className="text-sm leading-7 text-slate-600 self-center">{report.missedOpportunitySummary}</p>
+                    <p className="text-sm leading-7 text-slate-600 self-center dark:text-slate-300">{report.missedOpportunitySummary}</p>
                   </div>
-                  <div className="mt-6 grid gap-5 border-t border-slate-200 pt-6 lg:grid-cols-2">
+                  <div className="mt-6 grid gap-5 border-t border-slate-200 pt-6 lg:grid-cols-2 dark:border-slate-700">
                     <div>
-                      <h3 className="font-semibold text-ink">Best improved answer</h3>
-                      <p className="mt-3 rounded-2xl bg-teal-50 px-4 py-4 text-sm leading-7 text-teal-950">{report.bestImprovedAnswer}</p>
+                      <h3 className="font-semibold text-ink dark:text-white">Best improved answer</h3>
+                      <p className="mt-3 rounded-2xl bg-teal-50 px-4 py-4 text-sm leading-7 text-teal-950 dark:bg-teal-900/30 dark:text-teal-100">{report.bestImprovedAnswer}</p>
                     </div>
                     <div>
-                      <h3 className="font-semibold text-ink">Suggested improvements</h3>
+                      <h3 className="font-semibold text-ink dark:text-white">Suggested improvements</h3>
                       <div className="mt-3 space-y-2">
                         {report.suggestedNextImprovements.map((item) => (
-                          <div key={item} className="rounded-2xl bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950">
+                          <div key={item} className="rounded-2xl bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-950 dark:bg-amber-900/30 dark:text-amber-100">
                             {item}
                           </div>
                         ))}
@@ -530,29 +548,35 @@ export default function ResultsPage() {
               {/* Answer timeline tab */}
               {activeTab === "timeline" ? (
                 <div className="p-6 sm:p-7">
-                  <div className="space-y-4">
-                    {session.turns.map((turn, index) => (
-                      <article key={turn.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
-                        <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500">Question {index + 1}</p>
-                        <p className="mt-2 font-semibold text-ink">{turn.question}</p>
-                        <p className="mt-4 text-sm font-semibold text-slate-500">Answer</p>
-                        <p className="mt-2 text-sm leading-7 text-slate-700">{turn.transcript}</p>
-                        <p className="mt-4 text-sm font-semibold text-slate-500">Interviewer&apos;s thoughts</p>
-                        <p className="mt-2 rounded-2xl bg-white px-4 py-3 text-sm leading-7 text-teal-900">{turn.evaluation.interviewerReaction}</p>
-                      </article>
-                    ))}
-                  </div>
+                  {session.turns.length === 0 ? (
+                    <p className="text-sm leading-7 text-slate-500 dark:text-slate-400">
+                      No answers were recorded in this session.
+                    </p>
+                  ) : (
+                    <div className="space-y-4">
+                      {session.turns.map((turn, index) => (
+                        <article key={turn.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/70">
+                          <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Question {index + 1}</p>
+                          <p className="mt-2 font-semibold text-ink dark:text-white">{turn.question}</p>
+                          <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">Answer</p>
+                          <p className="mt-2 text-sm leading-7 text-slate-700 dark:text-slate-300">{turn.transcript}</p>
+                          <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">Interviewer&apos;s thoughts</p>
+                          <p className="mt-2 rounded-2xl bg-white px-4 py-3 text-sm leading-7 text-teal-900 dark:bg-slate-900 dark:text-teal-200">{turn.evaluation.interviewerReaction}</p>
+                        </article>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : null}
             </div>
 
-            <footer className="border-t border-slate-200 py-8 text-center">
-              <p className="text-lg font-semibold text-ink">Keep practicing!</p>
-              <p className="mt-2 text-sm text-slate-500">Review the feedback, refine your approach, and try again.</p>
+            <footer className="border-t border-slate-200 py-8 text-center dark:border-slate-700">
+              <p className="text-lg font-semibold text-ink dark:text-white">Keep practicing!</p>
+              <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">Review the feedback, refine your approach, and try again.</p>
               <button
                 type="button"
                 onClick={startNewSession}
-                className="mt-5 inline-flex rounded-2xl bg-teal-600 px-12 py-3 font-semibold text-white transition hover:bg-teal-700"
+                className="mt-5 inline-flex rounded-2xl bg-teal-600 px-12 py-3 font-semibold text-white transition hover:bg-teal-700 dark:bg-teal-500 dark:hover:bg-teal-400"
               >
                 Start a new session
               </button>
