@@ -79,6 +79,63 @@ const FILLER_WORDS = [
   "and stuff like that", "and so forth", "i mean like"
 ];
 
+// Errors that should NOT trigger an auto-restart (the user / browser has
+// permanently denied access or the engine has reported a state from which
+// silently retrying would either fail loudly or hide a real problem).
+const FATAL_RECOGNITION_ERRORS = new Set([
+  "not-allowed",
+  "service-not-allowed",
+  "audio-capture",
+  "language-not-supported"
+]);
+
+// Backoff before re-issuing recognition.start() after onend on mobile browsers
+// that force-stop continuous recognition every ~10–15s (notably iOS Safari).
+// Calling start() too quickly after stop() raises InvalidStateError on Chrome.
+const RESTART_BACKOFF_MS = 250;
+
+// Word-level overlap dedupe cap. iOS Safari has been observed re-emitting up to
+// the trailing handful of words from the previous recognition session as the
+// first results of the next; capping search to 12 words is well above that and
+// keeps the comparison cheap (worst case 12 string equality checks).
+const MAX_OVERLAP_WORDS = 12;
+
+/**
+ * Returns `incoming` with any leading word-prefix that already appears as the
+ * trailing suffix of `committed` removed. Comparison is case-insensitive and
+ * whitespace-normalized; the original casing of the surviving tail is
+ * preserved. This protects against iOS Safari restart-replay where a chunk of
+ * the previous session's tail is re-emitted as the new session's head.
+ *
+ * Exported for unit testing.
+ */
+export function dedupeOverlap(committed: string, incoming: string): string {
+  const incomingTrim = incoming.trim();
+  if (!incomingTrim) return "";
+  const committedTrim = committed.trim();
+  if (!committedTrim) return incomingTrim;
+
+  const committedWords = committedTrim.toLowerCase().split(/\s+/).filter(Boolean);
+  const incomingWordsRaw = incomingTrim.split(/\s+/).filter(Boolean);
+  const incomingWordsLower = incomingWordsRaw.map((w) => w.toLowerCase());
+  const maxK = Math.min(committedWords.length, incomingWordsLower.length, MAX_OVERLAP_WORDS);
+
+  for (let k = maxK; k > 0; k -= 1) {
+    let isMatch = true;
+    for (let i = 0; i < k; i += 1) {
+      if (committedWords[committedWords.length - k + i] !== incomingWordsLower[i]) {
+        isMatch = false;
+        break;
+      }
+    }
+    if (isMatch) {
+      return incomingWordsRaw.slice(k).join(" ");
+    }
+  }
+
+  return incomingTrim;
+}
+
 export function useSpeechRecognition() {
   const [isSupported, setIsSupported] = useState(false);
   const [isListening, setIsListening] = useState(false);
@@ -87,9 +144,36 @@ export function useSpeechRecognition() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const recognitionRef = useRef<RecognitionInstance | null>(null);
   const timerRef = useRef<number | null>(null);
+  const restartTimerRef = useRef<number | null>(null);
   const startTimeRef = useRef<number | null>(null);
   const isListeningRef = useRef(false);
   const captureEnabledRef = useRef(false);
+  // Set when the engine reports a non-recoverable error. Once true, we stop
+  // auto-restarting until the consumer explicitly calls startListening again.
+  const fatalErrorRef = useRef(false);
+
+  const ensureElapsedTimer = useCallback(() => {
+    if (timerRef.current !== null) return;
+    timerRef.current = window.setInterval(() => {
+      if (startTimeRef.current) {
+        setElapsedSeconds(Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000)));
+      }
+    }, 1000);
+  }, []);
+
+  const clearElapsedTimer = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const clearRestartTimer = useCallback(() => {
+    if (restartTimerRef.current !== null) {
+      window.clearTimeout(restartTimerRef.current);
+      restartTimerRef.current = null;
+    }
+  }, []);
 
   useEffect(() => {
     const SpeechRecognitionConstructor = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -124,8 +208,16 @@ export function useSpeechRecognition() {
         }
       }
 
-      if (finalText) {
-        setTranscript((current) => `${current} ${finalText}`.trim());
+      const trimmedFinal = finalText.trim();
+      if (trimmedFinal) {
+        // Dedupe inside the updater so we always compare against the freshest
+        // committed transcript, even when multiple onresult events batch in
+        // the same React tick.
+        setTranscript((current) => {
+          const deduped = dedupeOverlap(current, trimmedFinal);
+          if (!deduped) return current;
+          return current ? `${current} ${deduped}` : deduped;
+        });
       }
 
       setInterimTranscript(interimText.trim());
@@ -134,15 +226,48 @@ export function useSpeechRecognition() {
     recognition.onend = () => {
       isListeningRef.current = false;
       setIsListening(false);
-      if (timerRef.current) {
-        window.clearInterval(timerRef.current);
-        timerRef.current = null;
+      clearElapsedTimer();
+
+      // iOS Safari force-stops continuous recognition every ~10–15s. If the
+      // consumer still wants capture, transparently restart after a short
+      // backoff so the user never sees a "stopped listening" state.
+      if (!captureEnabledRef.current || fatalErrorRef.current) {
+        return;
       }
+
+      clearRestartTimer();
+      restartTimerRef.current = window.setTimeout(() => {
+        restartTimerRef.current = null;
+        if (!captureEnabledRef.current || fatalErrorRef.current) return;
+        if (isListeningRef.current) return;
+        if (!recognitionRef.current) return;
+
+        try {
+          recognitionRef.current.start();
+          isListeningRef.current = true;
+          setIsListening(true);
+          ensureElapsedTimer();
+        } catch {
+          // start() can throw InvalidStateError if recognition is mid-stop.
+          // Leave isListening false; the next onend will retry.
+          isListeningRef.current = false;
+          setIsListening(false);
+        }
+      }, RESTART_BACKOFF_MS);
     };
 
-    recognition.onerror = () => {
+    recognition.onerror = (event) => {
       isListeningRef.current = false;
       setIsListening(false);
+
+      if (FATAL_RECOGNITION_ERRORS.has(event.error)) {
+        fatalErrorRef.current = true;
+        captureEnabledRef.current = false;
+        clearElapsedTimer();
+        clearRestartTimer();
+      }
+      // Non-fatal errors (no-speech, aborted, network) flow through to
+      // recognition.onend, where the auto-restart loop above takes over.
     };
 
     recognitionRef.current = recognition;
@@ -150,11 +275,10 @@ export function useSpeechRecognition() {
 
     return () => {
       recognition.stop();
-      if (timerRef.current) {
-        window.clearInterval(timerRef.current);
-      }
+      clearElapsedTimer();
+      clearRestartTimer();
     };
-  }, []);
+  }, [clearElapsedTimer, clearRestartTimer, ensureElapsedTimer]);
 
   const resetTranscript = useCallback(() => {
     setTranscript("");
@@ -165,16 +289,26 @@ export function useSpeechRecognition() {
 
   const setCaptureEnabled = useCallback((enabled: boolean) => {
     captureEnabledRef.current = enabled;
+    if (enabled) {
+      // A fresh capture window means any prior fatal-error latch should be
+      // released; the consumer is explicitly opting back in.
+      fatalErrorRef.current = false;
+    } else {
+      // No more auto-restarts once capture is disabled.
+      clearRestartTimer();
+    }
     setTranscript("");
     setInterimTranscript("");
     setElapsedSeconds(0);
     startTimeRef.current = enabled && isListeningRef.current ? Date.now() : null;
-  }, []);
+  }, [clearRestartTimer]);
 
   const startListening = useCallback((options: StartListeningOptions = {}) => {
     if (!recognitionRef.current || isListeningRef.current) {
       return;
     }
+
+    fatalErrorRef.current = false;
 
     const shouldReset = options.reset ?? true;
     if (shouldReset) {
@@ -184,11 +318,7 @@ export function useSpeechRecognition() {
       startTimeRef.current = Date.now();
     }
 
-    timerRef.current = window.setInterval(() => {
-      if (startTimeRef.current) {
-        setElapsedSeconds(Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000)));
-      }
-    }, 1000);
+    ensureElapsedTimer();
 
     try {
       recognitionRef.current.start();
@@ -197,16 +327,14 @@ export function useSpeechRecognition() {
     } catch {
       isListeningRef.current = false;
       setIsListening(false);
-      if (timerRef.current) {
-        window.clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+      clearElapsedTimer();
     }
-  }, [resetTranscript]);
+  }, [clearElapsedTimer, ensureElapsedTimer, resetTranscript]);
 
   const stopListening = useCallback(() => {
+    clearRestartTimer();
     recognitionRef.current?.stop();
-  }, []);
+  }, [clearRestartTimer]);
 
   const metrics = useMemo<SpeechMetrics>(() => {
     const fullTranscript = `${transcript} ${interimTranscript}`.trim().toLowerCase();

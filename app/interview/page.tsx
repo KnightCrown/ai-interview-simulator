@@ -126,6 +126,8 @@ export default function InterviewPage() {
   const [coachingThoughts, setCoachingThoughts] = useState<CoachingThought[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCoaching, setShowCoaching] = useState(false);
+  // Default the live-insights overlay ON for mobile users so they can see
+  // confidence/WPM/mood without scrolling down to the insights panel.
   const [showOverlay, setShowOverlay] = useState(false);
   const [showTranscript, setShowTranscript] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -138,6 +140,12 @@ export default function InterviewPage() {
   );
   const [pendingAnswerCount, setPendingAnswerCount] = useState(0);
   const [answerSecondsRemaining, setAnswerSecondsRemaining] = useState(ANSWER_SECONDS);
+  // The mobile gate modal blocks the interview from starting (no TTS, no
+  // recording) until the user dismisses it. mobileGateRef is the synchronous
+  // companion to the state; the speak effect reads the ref so it sees the
+  // gate even on the same render the gate is set during mount.
+  const [mobileGateOpen, setMobileGateOpen] = useState(false);
+  const mobileGateRef = useRef(false);
   const sessionRef = useRef<InterviewSession | null>(null);
   const confirmedSessionRef = useRef<InterviewSession | null>(null);
   const lastSpokenQuestionRef = useRef<string | null>(null);
@@ -181,6 +189,23 @@ export default function InterviewPage() {
       setMicMenuOpen(false);
     }
   }, [mainVideo]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!window.matchMedia("(max-width: 767px)").matches) return;
+
+    setShowOverlay(true);
+    // Setting the ref synchronously alongside the state ensures the speak
+    // effect — which runs in the same effect pass on first mount — sees the
+    // gate and aborts before triggering TTS or speech capture.
+    mobileGateRef.current = true;
+    setMobileGateOpen(true);
+  }, []);
+
+  const dismissMobileGate = useCallback(() => {
+    mobileGateRef.current = false;
+    setMobileGateOpen(false);
+  }, []);
 
   useEffect(() => {
     navigator.mediaDevices
@@ -591,6 +616,12 @@ export default function InterviewPage() {
     if (!session?.currentQuestion || session.currentQuestion === lastSpokenQuestionRef.current) {
       return;
     }
+    // The mobile gate modal pauses everything until dismissed. Bail out before
+    // we touch lastSpokenQuestionRef so the effect re-runs and speaks the
+    // question once mobileGateOpen flips to false.
+    if (mobileGateRef.current) {
+      return;
+    }
 
     const question = session.currentQuestion;
     lastSpokenQuestionRef.current = question;
@@ -626,7 +657,7 @@ export default function InterviewPage() {
       setCaptureEnabled(true);
       setShowTranscript(true);
     })();
-  }, [resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, stop, stopListening]);
+  }, [mobileGateOpen, resetTranscript, session?.currentQuestion, setCaptureEnabled, speak, stop, stopListening]);
 
   useEffect(() => {
     if (!showTranscript || session?.interviewComplete) {
@@ -672,6 +703,48 @@ export default function InterviewPage() {
   return (
     <main className="min-h-screen bg-[#f7f9fc] text-ink dark:bg-slate-950 dark:text-slate-100">
 
+      {mobileGateOpen ? (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-ink/45 px-4 backdrop-blur-sm dark:bg-black/65"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mobile-gate-title"
+        >
+          <div className="relative w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-panel dark:border-slate-700 dark:bg-slate-900">
+            <button
+              type="button"
+              onClick={dismissMobileGate}
+              aria-label="Dismiss notice and start interview"
+              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+            >
+              x
+            </button>
+
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700 dark:text-teal-300">
+              Heads up
+            </p>
+            <h3 id="mobile-gate-title" className="mt-2 text-xl font-semibold text-ink dark:text-white">
+              This experience is designed for desktop
+            </h3>
+            <p className="mt-3 text-sm leading-6 text-slate-700 dark:text-slate-300">
+              You can still take an interview on your phone, but live transcription, the camera-based engagement tracking, and the AI voice can behave inconsistently on mobile browsers. For the smoothest run, open this on a laptop or desktop in Chrome, Edge, or Safari.
+            </p>
+            {!speechIsSupported ? (
+              <p className="mt-3 rounded-2xl bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900 dark:bg-amber-900/30 dark:text-amber-100">
+                Live transcription isn&rsquo;t available in this browser — use Chrome or Safari for the captioned experience.
+              </p>
+            ) : null}
+            <button
+              type="button"
+              onClick={dismissMobileGate}
+              className="mt-5 w-full rounded-2xl bg-ink px-5 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-teal-500 dark:hover:bg-teal-400"
+            >
+              Continue to interview
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       <header className="border-b border-slate-200/80 bg-white/90 px-5 py-4 backdrop-blur dark:border-slate-800 dark:bg-slate-900/90">
         <div className="mx-auto flex max-w-[118rem] flex-col gap-4 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:items-center">
           <div className="flex items-center gap-4">
@@ -681,16 +754,16 @@ export default function InterviewPage() {
 
           <div className="justify-self-center text-center">
             <p className="text-sm font-medium dark:text-slate-200">Question {currentQuestionNumber} of {totalQuestions}</p>
-            <div className="mt-3 flex items-center justify-center gap-3">
+            <div className="mt-3 flex items-center justify-center gap-2 sm:gap-3">
               {Array.from({ length: totalQuestions }).map((_, index) => {
                 const step = index + 1;
                 const isActive = step <= currentQuestionNumber;
 
                 return (
-                  <div key={step} className="flex items-center gap-3">
+                  <div key={step} className="flex items-center gap-2 sm:gap-3">
                     <span className={`h-3 w-3 rounded-full ${isActive ? "bg-teal-600 dark:bg-teal-400" : "bg-slate-200 dark:bg-slate-700"}`} />
                     {step < totalQuestions ? (
-                      <span className={`h-1 w-14 rounded-full ${step < currentQuestionNumber ? "bg-teal-600 dark:bg-teal-400" : "bg-slate-200 dark:bg-slate-700"}`} />
+                      <span className={`h-1 w-7 rounded-full sm:w-14 ${step < currentQuestionNumber ? "bg-teal-600 dark:bg-teal-400" : "bg-slate-200 dark:bg-slate-700"}`} />
                     ) : null}
                   </div>
                 );
@@ -698,7 +771,7 @@ export default function InterviewPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3 justify-start lg:justify-end">
+          <div className="flex items-center justify-center gap-3 lg:justify-end">
             <TechSpecsButton variant="header" />
             <button
               type="button"
@@ -712,8 +785,8 @@ export default function InterviewPage() {
         </div>
       </header>
 
-      <div className="mx-auto grid max-w-[124rem] gap-6 px-5 py-8 lg:grid-cols-[16rem_minmax(0,68rem)_24rem]">
-        <aside className="rounded-2xl border border-slate-200 bg-white p-6 shadow-panel dark:border-slate-700 dark:bg-slate-900 lg:sticky lg:top-8 lg:h-[calc(100vh-7rem)] lg:overflow-y-auto">
+      <div className="mx-auto grid max-w-[124rem] gap-6 px-5 py-8 lg:grid-cols-[16rem_minmax(0,68rem)_24rem] lg:grid-rows-[auto_auto]">
+        <aside className="order-3 rounded-2xl border border-slate-200 bg-white p-6 shadow-panel dark:border-slate-700 dark:bg-slate-900 lg:order-none lg:col-start-1 lg:row-span-2 lg:row-start-1 lg:sticky lg:top-8 lg:h-[calc(100vh-7rem)] lg:overflow-y-auto">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Live insights</p>
 
           <div className="mt-5">
@@ -801,8 +874,8 @@ export default function InterviewPage() {
           </div>
         </aside>
 
-        <section className="space-y-5">
-          <div className="relative mx-auto aspect-video max-h-[46vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-950 shadow-panel">
+        <section className="contents">
+          <div className="relative order-1 mx-auto aspect-video max-h-[46vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-950 shadow-panel lg:col-start-2 lg:row-start-1">
             {mainVideo === "interviewer" ? (
               <Avatar2D
                 className="h-full w-full rounded-2xl border-0 shadow-none"
@@ -820,7 +893,7 @@ export default function InterviewPage() {
               className={
                 mainVideo === "candidate"
                   ? "relative h-full w-full cursor-pointer overflow-hidden"
-                  : "absolute bottom-4 right-4 z-10 h-[34%] w-[28%] min-w-40 cursor-pointer overflow-hidden rounded-xl border border-white/20 shadow-2xl"
+                  : "absolute bottom-4 right-4 z-10 aspect-video w-[28%] min-w-40 cursor-pointer overflow-hidden rounded-xl border border-white/20 shadow-2xl"
               }
             >
               <video
@@ -838,7 +911,7 @@ export default function InterviewPage() {
             </div>
 
             {mainVideo === "candidate" ? (
-              <div className="absolute bottom-4 right-4 h-[34%] w-[28%] min-w-40">
+              <div className="absolute bottom-4 right-4 aspect-video w-[28%] min-w-40">
                 <Avatar2D
                   compact
                   className="h-full w-full rounded-xl border border-white/20 shadow-2xl"
@@ -876,7 +949,7 @@ export default function InterviewPage() {
                   </button>
 
                   {micMenuOpen ? (
-                    <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
+                    <div className="absolute right-0 mt-2 w-60 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
                       {audioDevices.length > 0 ? (
                         audioDevices.map((device, index) => (
                           <button
@@ -923,7 +996,7 @@ export default function InterviewPage() {
                   </button>
 
                   {cameraMenuOpen ? (
-                    <div className="absolute right-0 mt-2 w-64 overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
+                    <div className="absolute right-0 mt-2 w-60 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
                       {face.videoDevices.length > 0 ? (
                         face.videoDevices.map((device, index) => (
                           <button
@@ -987,7 +1060,7 @@ export default function InterviewPage() {
             </div>
           </div>
 
-          <div className="mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-8 py-6 shadow-panel dark:border-slate-700 dark:bg-slate-900">
+          <div className="order-2 mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-panel sm:px-8 sm:py-6 lg:col-start-2 lg:row-start-2 dark:border-slate-700 dark:bg-slate-900">
             <div>
               <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Interviewer question</p>
               <div className="mt-3 flex items-start justify-between gap-5">
@@ -1025,7 +1098,7 @@ export default function InterviewPage() {
           </div>
         </section>
 
-        <aside className="space-y-4 lg:sticky lg:top-8 lg:self-start">
+        <aside className="order-4 space-y-4 lg:col-start-3 lg:row-span-2 lg:row-start-1 lg:self-start lg:sticky lg:top-8">
           <button
             type="button"
             onClick={() => setShowCoaching((current) => !current)}

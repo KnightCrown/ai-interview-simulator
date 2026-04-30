@@ -51,7 +51,7 @@ All agents are **stateless and composable**. The full session state is owned by 
 ## Technical Stack
 
 **AI / Language Models**  
-- OpenAI `gpt-4.1-mini` (Responses API) for question generation, evaluation, and report synthesis  
+- OpenAI `gpt-4.1-mini`  
 
 **Speech and Audio**  
 - ElevenLabs `eleven_turbo_v2_5` for streaming TTS  

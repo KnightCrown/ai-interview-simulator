@@ -180,6 +180,8 @@ export default function LandingPage() {
   const [roleDropdownOpen, setRoleDropdownOpen] = useState(false);
   const roleDropdownRef = useRef<HTMLDivElement>(null);
   const [openPopover, setOpenPopover] = useState<PopoverId | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [demoLightboxOpen, setDemoLightboxOpen] = useState(false);
   const [demoQuestionIndex, setDemoQuestionIndex] = useState(0);
   const [demoConfidence, setDemoConfidence] = useState(62);
   const [demoThoughtIndex, setDemoThoughtIndex] = useState(0);
@@ -244,6 +246,8 @@ export default function LandingPage() {
       if (event.key !== "Escape") return;
       setOpenPopover(null);
       setRoleDropdownOpen(false);
+      setMobileMenuOpen(false);
+      setDemoLightboxOpen(false);
       if (!showDeviceDialog && !showPreparationOverlay) {
         setShowSetupModal(false);
       }
@@ -552,9 +556,8 @@ export default function LandingPage() {
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700 dark:text-teal-300">Pricing</p>
                   <h3 className="mt-2 text-xl font-semibold text-ink dark:text-white">Free for everyone</h3>
                   <p className="mt-3 text-sm leading-6 text-slate-700 dark:text-slate-300">
-                    This is an OpenAI Hackathon project. There are no accounts, no payments, and no credit card required. Open the
-                    page, pick a role, and start practicing right away. We may add premium tiers later, but the core simulator
-                    will always have a free practice mode.
+                    This is an open hackathon project. There are no accounts, no payments, and no credit cards required. Open the
+                    page, pick a role, and start practicing right away.
                   </p>
                 </div>
               ) : null}
@@ -563,17 +566,87 @@ export default function LandingPage() {
           </div>
         ) : null}
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 md:gap-3">
           <button
             type="button"
             onClick={openSetupModal}
-            className="rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-teal-500 dark:text-white dark:hover:bg-teal-400"
+            className="hidden rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-slate-800 md:inline-flex dark:bg-teal-500 dark:text-white dark:hover:bg-teal-400"
           >
             Start your first interview
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(true)}
+            aria-label="Open menu"
+            aria-expanded={mobileMenuOpen}
+            className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 bg-white text-ink transition hover:border-slate-300 hover:bg-slate-50 md:hidden dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:border-slate-600 dark:hover:bg-slate-700"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="3" y1="6" x2="21" y2="6" />
+              <line x1="3" y1="12" x2="21" y2="12" />
+              <line x1="3" y1="18" x2="21" y2="18" />
+            </svg>
           </button>
           <ThemeToggle />
         </div>
       </header>
+
+      {mobileMenuOpen ? (
+        <div
+          className="fixed inset-0 z-50 bg-ink/45 backdrop-blur-sm md:hidden dark:bg-black/65"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setMobileMenuOpen(false);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Main menu"
+        >
+          <aside className="absolute right-0 top-0 flex h-full w-72 max-w-[85vw] flex-col gap-1 border-l border-slate-200 bg-white p-5 shadow-panel dark:border-slate-700 dark:bg-slate-900">
+            <div className="flex items-center justify-between pb-3">
+              <span className="text-base font-semibold text-ink dark:text-white">Menu</span>
+              <button
+                type="button"
+                onClick={() => setMobileMenuOpen(false)}
+                aria-label="Close menu"
+                className="grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+              >
+                x
+              </button>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setMobileMenuOpen(false); setOpenPopover("how"); }}
+              className="rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 hover:text-ink dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+            >
+              How it works
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMobileMenuOpen(false); setOpenPopover("features"); }}
+              className="rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 hover:text-ink dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+            >
+              Features
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMobileMenuOpen(false); setOpenPopover("pricing"); }}
+              className="rounded-xl px-4 py-3 text-left text-sm font-medium text-slate-700 transition hover:bg-slate-100 hover:text-ink dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+            >
+              Pricing
+            </button>
+            <div className="px-1 py-1" onClick={() => setMobileMenuOpen(false)}>
+              <TechSpecsButton variant="nav" />
+            </div>
+            <button
+              type="button"
+              onClick={() => { setMobileMenuOpen(false); openSetupModal(); }}
+              className="mt-3 rounded-full bg-ink px-5 py-3 text-center text-sm font-semibold text-white transition hover:bg-slate-800 dark:bg-teal-500 dark:hover:bg-teal-400"
+            >
+              Start your first interview
+            </button>
+          </aside>
+        </div>
+      ) : null}
 
       <section className="mt-10 text-center">
         <h1 className="mx-auto max-w-4xl text-4xl font-semibold leading-tight tracking-tight text-ink md:text-5xl lg:text-6xl dark:text-white">
@@ -616,7 +689,31 @@ export default function LandingPage() {
       </section>
 
       <section className="mt-12">
-        <div className="rounded-[2rem] border border-slate-200 bg-white/80 p-4 shadow-panel backdrop-blur dark:border-slate-700 dark:bg-slate-900/60 md:p-6">
+        <button
+          type="button"
+          onClick={() => setDemoLightboxOpen(true)}
+          aria-label="Expand interview demo screenshot"
+          className="group relative block w-full overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white shadow-panel transition hover:border-slate-300 md:hidden dark:border-slate-700 dark:bg-slate-900 dark:hover:border-slate-600"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/demo-screenshot.png"
+            alt="Preview of the AI Interview Simulator showing live insights, the interviewer video, the candidate camera, and the live coaching panel."
+            className="block h-auto w-full"
+            draggable={false}
+          />
+          <span className="pointer-events-none absolute right-3 top-3 inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white backdrop-blur">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="15 3 21 3 21 9" />
+              <polyline points="9 21 3 21 3 15" />
+              <line x1="21" y1="3" x2="14" y2="10" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+            Tap to expand
+          </span>
+        </button>
+
+        <div className="hidden rounded-[2rem] border border-slate-200 bg-white/80 p-4 shadow-panel backdrop-blur md:block md:p-6 dark:border-slate-700 dark:bg-slate-900/60">
           <div className="grid gap-4 lg:grid-cols-[230px_minmax(0,1fr)_240px]">
             <aside className="rounded-3xl border border-slate-200 bg-white p-5 dark:border-slate-700 dark:bg-slate-900">
               <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400 dark:text-slate-500">Live insights</p>
@@ -1055,6 +1152,37 @@ export default function LandingPage() {
               <span>{preparationStepIndex + 1} of {PREPARATION_STEPS.length}</span>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {demoLightboxOpen ? (
+        <div
+          className="fixed inset-0 z-[70] grid place-items-center bg-black/85 p-4 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Demo screenshot"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setDemoLightboxOpen(false);
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setDemoLightboxOpen(false)}
+            aria-label="Close demo screenshot"
+            className="absolute right-4 top-4 grid h-10 w-10 place-items-center rounded-full bg-white/15 text-white backdrop-blur transition hover:bg-white/25"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/demo-screenshot.png"
+            alt="Full preview of the AI Interview Simulator interface."
+            className="max-h-[90vh] max-w-[95vw] rounded-2xl object-contain shadow-2xl"
+            draggable={false}
+          />
         </div>
       ) : null}
     </main>

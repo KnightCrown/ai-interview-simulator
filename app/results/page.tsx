@@ -318,17 +318,17 @@ export default function ResultsPage() {
   return (
     <main className="min-h-screen px-4 py-6 text-ink sm:px-6 dark:text-slate-100">
       <div className="relative z-0 mx-auto max-w-7xl rounded-3xl border border-slate-200/80 bg-white/85 p-5 shadow-panel backdrop-blur sm:p-6 dark:border-slate-700 dark:bg-slate-900/85">
-        <header className="flex flex-wrap items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
+        <header className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
+          <div className="flex items-center gap-3 sm:gap-4">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-ink text-sm font-bold text-white dark:bg-white dark:text-ink">AI</div>
-            <h1 className="text-2xl font-semibold dark:text-white">Interview Summary</h1>
+            <h1 className="text-xl font-semibold sm:text-2xl dark:text-white">Interview Summary</h1>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 lg:justify-end">
             <TechSpecsButton variant="header" />
             <button
               type="button"
               onClick={startNewSession}
-              className="rounded-2xl border border-slate-200 bg-white px-5 py-3 text-sm font-semibold text-ink shadow-sm transition hover:border-teal-200 hover:text-teal-700 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:border-teal-400/40 dark:hover:text-teal-200"
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-ink shadow-sm transition hover:border-teal-200 hover:text-teal-700 sm:px-5 sm:py-3 dark:border-slate-700 dark:bg-slate-800 dark:text-white dark:hover:border-teal-400/40 dark:hover:text-teal-200"
             >
               Start a new session
             </button>
@@ -374,17 +374,28 @@ export default function ResultsPage() {
               const tone = OUTCOME_TONES[report.hiringOutcome];
 
               return (
-                <section className="overflow-hidden rounded-3xl bg-ink p-8 text-white shadow-panel sm:p-10">
+                <section className="overflow-hidden rounded-3xl bg-ink p-6 text-white shadow-panel sm:p-8 lg:p-10">
                   <div
-                    className="grid gap-8 lg:grid-cols-[1fr_18rem] lg:items-center"
+                    className="grid gap-6 lg:grid-cols-[1fr_18rem] lg:items-center lg:gap-8"
                     style={{
                       background: `radial-gradient(circle at 84% 40%, ${tone.soft}, transparent 34%)`
                     }}
                   >
                     <div>
-                      <p className={`text-xs font-bold uppercase tracking-[0.22em] ${tone.text}`}>Hiring outcome</p>
-                      <p className={`mt-5 text-6xl font-semibold tracking-tight ${tone.text}`}>{tone.label}</p>
-                      <p className="mt-5 max-w-2xl text-lg leading-8 text-slate-100">{report.emotionalSummary}</p>
+                      <div className="flex items-center gap-4 lg:block">
+                        <div
+                          className="grid h-16 w-16 shrink-0 place-items-center rounded-full border-4 text-2xl font-semibold lg:hidden"
+                          style={{ borderColor: tone.accent, color: tone.accent }}
+                          aria-hidden="true"
+                        >
+                          {tone.symbol}
+                        </div>
+                        <div>
+                          <p className={`text-xs font-bold uppercase tracking-[0.22em] ${tone.text}`}>Hiring outcome</p>
+                          <p className={`mt-2 text-4xl font-semibold tracking-tight sm:text-5xl lg:mt-5 lg:text-6xl ${tone.text}`}>{tone.label}</p>
+                        </div>
+                      </div>
+                      <p className="mt-4 max-w-2xl text-base leading-7 text-slate-100 sm:text-lg sm:leading-8 lg:mt-5">{report.emotionalSummary}</p>
                     </div>
                     <div className="hidden justify-self-center lg:block">
                       <div
@@ -399,9 +410,9 @@ export default function ResultsPage() {
               );
             })()}
 
-            <section className="rounded-3xl border border-slate-200 bg-white p-6 dark:border-slate-700 dark:bg-slate-900">
+            <section className="rounded-3xl border border-slate-200 bg-white p-5 sm:p-6 dark:border-slate-700 dark:bg-slate-900">
               <p className="text-sm font-bold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">Score breakdown</p>
-              <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+              <div className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
                 {(["Overall", "Clarity", "Relevance", "Confidence", "Engagement"] as const).map((label) => (
                   <ScoreCard
                     key={label}
@@ -460,25 +471,26 @@ export default function ResultsPage() {
 
             <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
               {/* Tab bar */}
-              <div className="flex border-b border-slate-200 dark:border-slate-700">
+              <div className="flex overflow-x-auto border-b border-slate-200 dark:border-slate-700">
                 {(
                   [
-                    { id: "feedback",      label: "Feedback" },
-                    { id: "opportunities", label: "Missed Opportunities" },
-                    { id: "timeline",      label: "Answer Timeline" }
-                  ] as { id: typeof activeTab; label: string }[]
-                ).map(({ id, label }) => (
+                    { id: "feedback",      label: "Feedback",            shortLabel: "Feedback" },
+                    { id: "opportunities", label: "Missed Opportunities", shortLabel: "Opportunities" },
+                    { id: "timeline",      label: "Answer Timeline",     shortLabel: "Timeline" }
+                  ] as { id: typeof activeTab; label: string; shortLabel: string }[]
+                ).map(({ id, label, shortLabel }) => (
                   <button
                     key={id}
                     type="button"
                     onClick={() => setActiveTab(id)}
-                    className={`flex-1 px-4 py-4 text-sm font-semibold transition-colors ${
+                    className={`flex-1 whitespace-nowrap px-3 py-4 text-sm font-semibold transition-colors sm:px-4 ${
                       activeTab === id
                         ? "border-b-2 border-teal-600 text-teal-700 dark:border-teal-400 dark:text-teal-300"
                         : "text-slate-500 hover:text-ink dark:text-slate-400 dark:hover:text-white"
                     }`}
                   >
-                    {label}
+                    <span className="sm:hidden">{shortLabel}</span>
+                    <span className="hidden sm:inline">{label}</span>
                   </button>
                 ))}
               </div>

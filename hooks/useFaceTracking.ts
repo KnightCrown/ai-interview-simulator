@@ -242,21 +242,38 @@ export function useFaceTracking(preferredDeviceId?: string | null) {
           }
         });
 
+        // On coarse-pointer (mobile/touch) devices, cap MediaPipe inference at
+        // ~15fps. Combined with the camera + Web Speech + ElevenLabs streaming
+        // already running, full rAF cadence here saturates mobile CPUs and
+        // triggers thermal throttling. The downstream metrics smoothing
+        // already animates over hundreds of ms, so the visible difference is
+        // negligible.
+        const isCoarsePointer =
+          typeof window !== "undefined" && window.matchMedia
+            ? window.matchMedia("(pointer: coarse)").matches
+            : false;
+        const minFrameIntervalMs = isCoarsePointer ? 67 : 0;
+        let lastSendAt = 0;
+
         const processFrame = async () => {
           if (!isMounted || !faceMesh || !videoRef.current) {
             return;
           }
 
-          try {
-            if (videoRef.current.readyState >= 2) {
-              await faceMesh.send({ image: videoRef.current });
+          const now = performance.now();
+          if (now - lastSendAt >= minFrameIntervalMs) {
+            try {
+              if (videoRef.current.readyState >= 2) {
+                lastSendAt = now;
+                await faceMesh.send({ image: videoRef.current });
+              }
+            } catch (error) {
+              if (isMounted) {
+                setPermissionError(error instanceof Error ? error.message : "Face tracking became unavailable.");
+                setIsReady(false);
+              }
+              return;
             }
-          } catch (error) {
-            if (isMounted) {
-              setPermissionError(error instanceof Error ? error.message : "Face tracking became unavailable.");
-              setIsReady(false);
-            }
-            return;
           }
 
           animationFrameId = window.requestAnimationFrame(() => {
