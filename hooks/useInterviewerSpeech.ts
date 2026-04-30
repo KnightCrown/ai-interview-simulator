@@ -37,6 +37,7 @@ export function useInterviewerSpeech(
   const currentUtteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null);
   const playbackObjectUrlRef = useRef<string | null>(null);
+  const playbackReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
 
   useEffect(() => {
     setSpeechSupported(typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window);
@@ -87,6 +88,11 @@ export function useInterviewerSpeech(
   }, []);
 
   const stopPlaybackAudio = useCallback(() => {
+    if (playbackReaderRef.current) {
+      void playbackReaderRef.current.cancel().catch(() => {});
+      playbackReaderRef.current = null;
+    }
+
     if (playbackAudioRef.current) {
       playbackAudioRef.current.pause();
       playbackAudioRef.current = null;
@@ -167,6 +173,9 @@ export function useInterviewerSpeech(
 
   const speakWithElevenLabs = useCallback(
     async (cleanText: string, voiceId: string): Promise<boolean> => {
+      const isDev = process.env.NODE_ENV !== "production";
+      const requestStartedAt = isDev ? performance.now() : 0;
+
       try {
         const res = await fetch("/api/interview/tts", {
           method: "POST",
@@ -174,16 +183,102 @@ export function useInterviewerSpeech(
           body: JSON.stringify({ text: cleanText, voiceId, difficulty: difficulty ?? undefined })
         });
 
-        if (!res.ok) {
+        if (isDev) {
+          const firstChunkMs = Math.round(performance.now() - requestStartedAt);
+          console.log(`[tts client] first_chunk_ms=${firstChunkMs} status=${res.status}`);
+        }
+
+        if (!res.ok || !res.body) {
           return false;
         }
 
-        const blob = await res.blob();
-        const objectUrl = URL.createObjectURL(blob);
         const audio = new Audio();
-        audio.src = objectUrl;
         playbackAudioRef.current = audio;
-        playbackObjectUrlRef.current = objectUrl;
+
+        // Prefer Media Source Extensions so playback can begin as soon as the first
+        // MP3 chunk arrives from the server, instead of waiting for the entire
+        // ElevenLabs response to finish before constructing a Blob.
+        const canUseMse =
+          typeof MediaSource !== "undefined" &&
+          typeof MediaSource.isTypeSupported === "function" &&
+          MediaSource.isTypeSupported("audio/mpeg");
+
+        if (canUseMse) {
+          const mediaSource = new MediaSource();
+          const objectUrl = URL.createObjectURL(mediaSource);
+          audio.src = objectUrl;
+          playbackObjectUrlRef.current = objectUrl;
+
+          const reader = res.body.getReader();
+          playbackReaderRef.current = reader;
+
+          mediaSource.addEventListener("sourceopen", async () => {
+            let sourceBuffer: SourceBuffer;
+            try {
+              sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
+            } catch (sourceBufferError) {
+              console.error("[tts client] addSourceBuffer failed:", sourceBufferError);
+              try {
+                mediaSource.endOfStream("decode");
+              } catch {}
+              return;
+            }
+
+            const appendChunk = (chunk: Uint8Array) =>
+              new Promise<void>((appendResolve, appendReject) => {
+                const onUpdateEnd = () => {
+                  sourceBuffer.removeEventListener("updateend", onUpdateEnd);
+                  sourceBuffer.removeEventListener("error", onError);
+                  appendResolve();
+                };
+                const onError = () => {
+                  sourceBuffer.removeEventListener("updateend", onUpdateEnd);
+                  sourceBuffer.removeEventListener("error", onError);
+                  appendReject(new Error("SourceBuffer append error"));
+                };
+                sourceBuffer.addEventListener("updateend", onUpdateEnd, { once: true });
+                sourceBuffer.addEventListener("error", onError, { once: true });
+                try {
+                  sourceBuffer.appendBuffer(chunk);
+                } catch (err) {
+                  sourceBuffer.removeEventListener("updateend", onUpdateEnd);
+                  sourceBuffer.removeEventListener("error", onError);
+                  appendReject(err as Error);
+                }
+              });
+
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                  try {
+                    mediaSource.endOfStream();
+                  } catch {}
+                  break;
+                }
+                if (value && value.byteLength > 0) {
+                  await appendChunk(value);
+                }
+              }
+            } catch (pumpError) {
+              if ((pumpError as Error)?.name !== "AbortError") {
+                console.warn("[tts client] MSE pump aborted:", pumpError);
+              }
+              try {
+                mediaSource.endOfStream("network");
+              } catch {}
+            } finally {
+              if (playbackReaderRef.current === reader) {
+                playbackReaderRef.current = null;
+              }
+            }
+          });
+        } else {
+          const blob = await res.blob();
+          const objectUrl = URL.createObjectURL(blob);
+          audio.src = objectUrl;
+          playbackObjectUrlRef.current = objectUrl;
+        }
 
         await ensureAudioGraph();
         if (!audioContextRef.current || !meterGainRef.current) {
@@ -232,6 +327,10 @@ export function useInterviewerSpeech(
           scheduleFallback(estimatedDuration);
 
           audio.onplay = () => {
+            if (isDev) {
+              const playStartMs = Math.round(performance.now() - requestStartedAt);
+              console.log(`[tts client] play_start_ms=${playStartMs}`);
+            }
             setIsSpeaking(true);
             startPolling();
             runSyntheticMouthAnimationLoop();

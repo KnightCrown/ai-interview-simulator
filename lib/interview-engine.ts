@@ -340,11 +340,14 @@ function getClient() {
   return new OpenAI({ apiKey });
 }
 
-async function generateWithOpenAI(prompt: string) {
+async function generateWithOpenAI(prompt: string, label: string = "openai") {
   const client = getClient();
   if (!client) {
     return null;
   }
+
+  const isDev = process.env.NODE_ENV !== "production";
+  const startedAt = isDev ? performance.now() : 0;
 
   try {
     const response = await client.responses.create({
@@ -352,9 +355,18 @@ async function generateWithOpenAI(prompt: string) {
       input: prompt
     });
 
+    if (isDev) {
+      const elapsedMs = Math.round(performance.now() - startedAt);
+      console.log(`[openai] ${label} ms=${elapsedMs}`);
+    }
+
     const text = response.output_text?.trim();
     return text || null;
   } catch (error) {
+    if (isDev) {
+      const elapsedMs = Math.round(performance.now() - startedAt);
+      console.log(`[openai] ${label} ms=${elapsedMs} status=error`);
+    }
     console.error("[interview-engine] OpenAI request failed:", error instanceof Error ? error.message : error);
     return null;
   }
@@ -559,7 +571,8 @@ export async function generateQuestion(input: {
   const roleExpectations = getRoleExpectations(input.session.role);
   const preparedQuestions = [input.session.currentQuestion, ...(input.session.questionQueue ?? [])].filter(Boolean);
   const sequentialInstructions = buildSequentialQuestionInstructions(input.session, targetTurnIndex);
-  const openAiResponse = await generateWithOpenAI(`
+  const openAiResponse = await generateWithOpenAI(
+    `
 You are an interviewer running a realistic ${input.session.role} interview at ${input.session.difficulty} difficulty.
 Behave like a real person with memory, light personality, and evolving strictness.
 Generate exactly one concise interview question for question ${targetTurnIndex + 1} of ${TURN_LIMIT}.
@@ -584,18 +597,19 @@ Difficulty behavior:
 Memory: ${JSON.stringify(input.session.memory)}
 Current stage: ${input.session.currentStage}
 Full turn history (for extra continuity if needed): ${JSON.stringify(
-    input.session.turns.map((turn) => ({
-      question: turn.question,
-      answer: turn.transcript,
-      candidateMood: turn.candidateMood ?? null,
-      feedback: turn.evaluation.feedback,
-      reaction: turn.evaluation.interviewerReaction,
-      weakAreas: turn.evaluation.missingResumeHighlights
-    }))
-  )}
+      input.session.turns.map((turn) => ({
+        q: turn.question,
+        a: turn.transcript,
+        mood: turn.candidateMood?.dominant ?? null,
+        feedback: turn.evaluation.feedback,
+        gaps: turn.evaluation.missingResumeHighlights
+      }))
+    )}
 Most recent completed answer apparent mood (use this like a real interviewer deciding tone and empathy): ${JSON.stringify(input.session.turns.at(-1)?.candidateMood ?? null)}
 Resume / CV context: ${JSON.stringify(input.session.resume)}
-`);
+`,
+    "generateQuestion"
+  );
 
   return openAiResponse?.trim() || fallback;
 }
@@ -659,7 +673,8 @@ export async function evaluateAnswer(input: {
 - feedback must note that no substantive answer was given and explain the real-world impact on a hiring decision.`
     : "";
 
-  const openAiResponse = await generateWithOpenAI(`
+  const openAiResponse = await generateWithOpenAI(
+    `
 You are grading a ${input.role} interview answer.
 Return strict JSON with keys:
 clarity, relevance, structure, confidence, engagement, liveConfidence, feedback, missedOpportunity, missingResumeHighlights, missedOpportunityDetails, improvedAnswer, rewriteHighlights, interviewerReaction, perceivedTone, pressureLabel
@@ -676,7 +691,17 @@ Difficulty calibration (critical):
 - Hard: strict senior-interviewer bar. Be difficult to impress, aggressively penalize vague claims, and require tradeoffs, ownership, and measurable impact for strong scores.
 Memory: ${JSON.stringify(input.memory)}
 Candidate resume context: ${JSON.stringify(input.resume)}
-Previous turns: ${JSON.stringify(input.previousTurns)}
+Previous turns: ${JSON.stringify(
+      input.previousTurns.map((turn) => ({
+        q: turn.question,
+        a: turn.transcript,
+        eval: {
+          clarity: turn.evaluation.clarity,
+          relevance: turn.evaluation.relevance,
+          structure: turn.evaluation.structure
+        }
+      }))
+    )}
 Transcript: ${input.transcript || "(no answer — candidate submitted without speaking)"}
 Speech metrics: ${JSON.stringify(input.speechMetrics)}
 Face metrics: ${JSON.stringify(input.faceMetrics)}
@@ -684,7 +709,9 @@ Candidate apparent facial demeanor during this answer (aggregated over the answe
 Interpret demeanor like a real interviewer: guarded, flat, sad-looking, or visibly tense delivery can reasonably affect perceived enthusiasm and confidence even when the words are decent—without inventing facts beyond this signal.
 Interview difficulty: ${input.difficulty}
 Role expectations: ${JSON.stringify(getRoleExpectations(input.role))}
-`);
+`,
+    "evaluateAnswer"
+  );
 
   if (!openAiResponse) {
     return fallback;
@@ -704,7 +731,8 @@ Role expectations: ${JSON.stringify(getRoleExpectations(input.role))}
 
 export async function finalizeInterview(session: InterviewSession) {
   const fallback = buildFallbackFinalReport(session);
-  const openAiResponse = await generateWithOpenAI(`
+  const openAiResponse = await generateWithOpenAI(
+    `
 You are producing a polished final hiring report.
 Return strict JSON with keys:
 overallScore, clarity, relevance, confidence, engagement, missedOpportunitySummary, bestImprovedAnswer, hiringLikelihood, hiringOutcome, emotionalSummary, strengths, strengthDescriptions, weaknesses, weaknessDescriptions, interviewerNotes, suggestedNextImprovements
@@ -719,7 +747,9 @@ Key requirements:
 - Each description should be specific to the candidate's actual answers, not generic filler.
 
 Session: ${JSON.stringify(session)}
-`);
+`,
+    "finalizeInterview"
+  );
 
   if (!openAiResponse) {
     return fallback;

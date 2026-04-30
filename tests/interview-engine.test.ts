@@ -238,6 +238,87 @@ describe("buildFallbackQuestion", () => {
   });
 });
 
+describe("parallel-path placeholder evaluation", () => {
+  // The /api/interview/answer route runs evaluateAnswer and generateQuestion in
+  // parallel; while evaluation is still in flight, the optimistic session passed
+  // to generateQuestion contains a "placeholder" turn whose evaluation has empty
+  // strings and neutral scores. The fallback question generator must still
+  // produce a substantive next question from this shape.
+  const PLACEHOLDER_EVAL = {
+    clarity: 50,
+    relevance: 50,
+    structure: 50,
+    confidence: 50,
+    engagement: 50,
+    liveConfidence: 50,
+    feedback: "",
+    missedOpportunity: "",
+    missingResumeHighlights: [] as string[],
+    missedOpportunityDetails: [] as never[],
+    improvedAnswer: "",
+    rewriteHighlights: [] as string[],
+    interviewerReaction: "",
+    perceivedTone: "",
+    pressureLabel: ""
+  };
+
+  it("produces a valid follow-up question when the latest turn carries a placeholder evaluation", () => {
+    const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const session = {
+      ...base,
+      turns: [
+        {
+          id: "inflight-1",
+          question: "Tell me about a project.",
+          transcript: "I led the API redesign and cut error rates by 30 percent across the platform.",
+          durationSeconds: 22,
+          speechMetrics: { fillerCount: 1, fillerWords: ["um"], speakingPace: 128 },
+          faceMetrics: sampleFace(),
+          evaluation: PLACEHOLDER_EVAL
+        }
+      ]
+    };
+
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 1 });
+
+    expect(question).toContain("tradeoff");
+    expect(question.length).toBeGreaterThan(20);
+    expect(question).not.toContain("haven't spoken");
+  });
+
+  it("produces a valid fresh-stage question when the prior turn carries a placeholder evaluation", () => {
+    const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const session = {
+      ...base,
+      turns: [
+        {
+          id: "t1",
+          question: "Q1",
+          transcript: "First answer.",
+          durationSeconds: 12,
+          speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
+          faceMetrics: sampleFace(),
+          evaluation: { ...PLACEHOLDER_EVAL, feedback: "real feedback for prior", relevance: 70 }
+        },
+        {
+          id: "inflight-2",
+          question: "Q2",
+          transcript: "I owned the migration plan, sequenced rollout, and coordinated three teams.",
+          durationSeconds: 30,
+          speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 130 },
+          faceMetrics: sampleFace(),
+          evaluation: PLACEHOLDER_EVAL
+        }
+      ]
+    };
+
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 2 });
+
+    expect(question).toMatch(/Software Engineer|slipping|recover/);
+    expect(question.length).toBeGreaterThan(20);
+  });
+});
+
 describe("question queue helpers", () => {
   it("starts sessions with an empty predictive question queue", () => {
     const session = buildSession("Software Engineer", "Medium", "Skip Resume", null);

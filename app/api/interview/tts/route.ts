@@ -43,7 +43,14 @@ export async function POST(request: Request) {
 
   const voice_settings = voiceSettingsForInterviewDifficulty(difficulty);
 
-  const upstream = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}`, {
+  const isDev = process.env.NODE_ENV !== "production";
+  const startedAt = isDev ? performance.now() : 0;
+
+  const upstreamUrl =
+    `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream` +
+    `?optimize_streaming_latency=3&output_format=mp3_44100_128`;
+
+  const upstream = await fetch(upstreamUrl, {
     method: "POST",
     headers: {
       "xi-api-key": apiKey,
@@ -56,6 +63,11 @@ export async function POST(request: Request) {
       voice_settings
     })
   });
+
+  if (isDev) {
+    const ttfbMs = Math.round(performance.now() - startedAt);
+    console.log(`[elevenlabs] ttfb_ms=${ttfbMs} status=${upstream.status} chars=${text.length}`);
+  }
 
   if (!upstream.ok) {
     const errText = await upstream.text().catch(() => "");
@@ -76,12 +88,38 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Voice synthesis failed." }, { status: 502 });
   }
 
-  const buffer = await upstream.arrayBuffer();
-  return new NextResponse(buffer, {
+  if (!upstream.body) {
+    console.error("ElevenLabs TTS: upstream response had no body to stream.");
+    return NextResponse.json({ error: "Voice synthesis failed." }, { status: 502 });
+  }
+
+  // Forward the upstream MP3 stream directly to the client so the browser can
+  // start decoding/playing as soon as the first chunks arrive, instead of waiting
+  // for ElevenLabs to finish producing the full file.
+  const passthrough = isDev ? withCompletionLog(upstream.body, startedAt) : upstream.body;
+
+  return new NextResponse(passthrough, {
     status: 200,
     headers: {
       "Content-Type": "audio/mpeg",
-      "Cache-Control": "no-store"
+      "Cache-Control": "no-store",
+      "Transfer-Encoding": "chunked"
     }
   });
+}
+
+function withCompletionLog(body: ReadableStream<Uint8Array>, startedAt: number) {
+  let bytes = 0;
+  const transform = new TransformStream<Uint8Array, Uint8Array>({
+    transform(chunk, controller) {
+      bytes += chunk.byteLength;
+      controller.enqueue(chunk);
+    },
+    flush() {
+      const totalMs = Math.round(performance.now() - startedAt);
+      console.log(`[elevenlabs] total_ms=${totalMs} bytes=${bytes}`);
+    }
+  });
+
+  return body.pipeThrough(transform);
 }
