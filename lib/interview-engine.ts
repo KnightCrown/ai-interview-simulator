@@ -235,7 +235,9 @@ export function buildFallbackFinalReport(session: InterviewSession): FinalReport
       hiringOutcome: "Rejected",
       emotionalSummary: "Hard to assess because the interview ended before any full answer was captured.",
       strengths: ["Session setup complete"],
+      strengthDescriptions: ["The session was configured and ready to go."],
       weaknesses: ["No answer data yet"],
+      weaknessDescriptions: ["Complete at least three answers to generate a meaningful evaluation."],
       interviewerNotes: ["The candidate ended the interview before a full evaluation could be formed."],
       suggestedNextImprovements: ["Complete at least three answers to generate a fuller recruiter-style report."]
     };
@@ -286,7 +288,9 @@ export function buildFallbackFinalReport(session: InterviewSession): FinalReport
           ? "You came across as promising, but your strongest ideas did not always land with enough depth."
           : "You came across as thoughtful but underpowered, with too many moments where the impact of your work stayed unclear.",
     strengths,
+    strengthDescriptions: strengths.map(() => "This came through in your answers and worked in your favour with the interviewer."),
     weaknesses,
+    weaknessDescriptions: weaknesses.map(() => "Strengthening this area would make your answers more persuasive and easier to act on."),
     interviewerNotes: [
       `The interviewer ended the process feeling ${session.memory.interviewerMood.toLowerCase()}.`,
       `Tone across the interview read as: ${session.memory.toneSummary}.`,
@@ -443,6 +447,21 @@ export function normalizeFinalReport(parsed: Partial<FinalReport>, fallback: Fin
       ? parsed.hiringOutcome
       : fallback.hiringOutcome;
 
+  const strengths = asStringArray(parsed.strengths, fallback.strengths);
+  const weaknesses = asStringArray(parsed.weaknesses, fallback.weaknesses);
+
+  const rawStrengthDescriptions = asStringArray(parsed.strengthDescriptions, fallback.strengthDescriptions);
+  const rawWeaknessDescriptions = asStringArray(parsed.weaknessDescriptions, fallback.weaknessDescriptions);
+
+  // Ensure description arrays are the same length as their paired item arrays,
+  // padding with fallback values if the LLM returned fewer entries.
+  const strengthDescriptions = strengths.map(
+    (_, i) => rawStrengthDescriptions[i] ?? fallback.strengthDescriptions[i] ?? fallback.strengthDescriptions[0]
+  );
+  const weaknessDescriptions = weaknesses.map(
+    (_, i) => rawWeaknessDescriptions[i] ?? fallback.weaknessDescriptions[i] ?? fallback.weaknessDescriptions[0]
+  );
+
   return {
     overallScore: asScore(parsed.overallScore, fallback.overallScore),
     clarity: asScore(parsed.clarity, fallback.clarity),
@@ -454,8 +473,10 @@ export function normalizeFinalReport(parsed: Partial<FinalReport>, fallback: Fin
     hiringLikelihood,
     hiringOutcome,
     emotionalSummary: asString(parsed.emotionalSummary, fallback.emotionalSummary),
-    strengths: asStringArray(parsed.strengths, fallback.strengths),
-    weaknesses: asStringArray(parsed.weaknesses, fallback.weaknesses),
+    strengths,
+    strengthDescriptions,
+    weaknesses,
+    weaknessDescriptions,
     interviewerNotes: asStringArray(parsed.interviewerNotes, fallback.interviewerNotes),
     suggestedNextImprovements: asStringArray(parsed.suggestedNextImprovements, fallback.suggestedNextImprovements)
   };
@@ -588,27 +609,37 @@ export async function evaluateAnswer(input: {
   previousTurns: InterviewTurn[];
   memory: InterviewSession["memory"];
 }) {
-  if (!isTranscriptSubstantive(input.transcript)) {
-    return buildEmptyAnswerEvaluation({
-      role: input.role,
-      transcript: input.transcript,
-      speechMetrics: input.speechMetrics,
-      faceMetrics: input.faceMetrics,
-      resume: input.resume,
-      strictness: input.memory.strictness,
-      previousWeakAreas: input.memory.weakAreas
-    });
-  }
+  const isEmptyAnswer = !isTranscriptSubstantive(input.transcript);
 
-  const fallback = buildFallbackEvaluation({
-    role: input.role,
-    transcript: input.transcript,
-    speechMetrics: input.speechMetrics,
-    faceMetrics: input.faceMetrics,
-    resume: input.resume,
-    strictness: input.memory.strictness,
-    previousWeakAreas: input.memory.weakAreas
-  });
+  const fallback = isEmptyAnswer
+    ? buildEmptyAnswerEvaluation({
+        role: input.role,
+        transcript: input.transcript,
+        speechMetrics: input.speechMetrics,
+        faceMetrics: input.faceMetrics,
+        resume: input.resume,
+        strictness: input.memory.strictness,
+        previousWeakAreas: input.memory.weakAreas
+      })
+    : buildFallbackEvaluation({
+        role: input.role,
+        transcript: input.transcript,
+        speechMetrics: input.speechMetrics,
+        faceMetrics: input.faceMetrics,
+        resume: input.resume,
+        strictness: input.memory.strictness,
+        previousWeakAreas: input.memory.weakAreas
+      });
+
+  const emptyAnswerNote = isEmptyAnswer
+    ? `CRITICAL: The candidate provided NO substantive answer — the transcript is blank or contains only silence/filler.
+- Set all scores to reflect this severely: clarity 1–8, relevance 1–6, structure 1–8, confidence 1–8, engagement 1–20, liveConfidence 1–10.
+- Do NOT invent or assume any content from the candidate.
+- Write interviewerReaction as a varied, natural first-person internal monologue expressing genuine concern, frustration, or skepticism about the non-engagement. Each session may warrant a different angle — e.g. wondering if they misunderstood, feeling the process is stalling, or noting this is a red flag. Do not repeat stock phrasing.
+- perceivedTone must reflect disengagement (e.g. "Disengaged", "Evasive", "Non-responsive", "Unprepared").
+- feedback must note that no substantive answer was given and explain the real-world impact on a hiring decision.`
+    : "";
+
   const openAiResponse = await generateWithOpenAI(`
 You are grading a ${input.role} interview answer.
 Return strict JSON with keys:
@@ -619,6 +650,7 @@ Be specific and slightly more realistic than a tutoring app.
 Write interviewerReaction as the interviewer's first-person internal monologue. Use language like "I'm concerned...", "I'm looking for...", or "I trust...".
 Do not write detached phrases like "the interviewer likely", "the interviewer might", or "the interviewer would".
 Keep interviewerReaction to 1-3 direct sentences.
+${emptyAnswerNote}
 Difficulty calibration (critical):
 - Easy: supportive and coach-like. Be lenient on rough edges, and only flag major misses.
 - Medium: realistic and professionally skeptical. Do NOT be overly generous. Reserve 85+ scores for clearly exceptional, evidence-backed answers.
@@ -626,7 +658,7 @@ Difficulty calibration (critical):
 Memory: ${JSON.stringify(input.memory)}
 Candidate resume context: ${JSON.stringify(input.resume)}
 Previous turns: ${JSON.stringify(input.previousTurns)}
-Transcript: ${input.transcript}
+Transcript: ${input.transcript || "(no answer — candidate submitted without speaking)"}
 Speech metrics: ${JSON.stringify(input.speechMetrics)}
 Face metrics: ${JSON.stringify(input.faceMetrics)}
 Candidate apparent facial demeanor during this answer (aggregated over the answer window): ${JSON.stringify(input.candidateMood ?? null)}
@@ -656,9 +688,17 @@ export async function finalizeInterview(session: InterviewSession) {
   const openAiResponse = await generateWithOpenAI(`
 You are producing a polished final hiring report.
 Return strict JSON with keys:
-overallScore, clarity, relevance, confidence, engagement, missedOpportunitySummary, bestImprovedAnswer, hiringLikelihood, hiringOutcome, emotionalSummary, strengths, weaknesses, interviewerNotes, suggestedNextImprovements
+overallScore, clarity, relevance, confidence, engagement, missedOpportunitySummary, bestImprovedAnswer, hiringLikelihood, hiringOutcome, emotionalSummary, strengths, strengthDescriptions, weaknesses, weaknessDescriptions, interviewerNotes, suggestedNextImprovements
 
 Return only a JSON object. Do not wrap it in markdown.
+
+Key requirements:
+- strengths: string[] — short labels for what the candidate did well (e.g. "Clear STAR structure").
+- strengthDescriptions: string[] — one sentence per strength explaining specifically WHY it helped them in this interview (parallel array, same length as strengths).
+- weaknesses: string[] — short labels for what to improve (e.g. "Vague impact claims").
+- weaknessDescriptions: string[] — one sentence per weakness explaining the concrete impact it had and why fixing it matters (parallel array, same length as weaknesses).
+- Each description should be specific to the candidate's actual answers, not generic filler.
+
 Session: ${JSON.stringify(session)}
 `);
 

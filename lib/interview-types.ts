@@ -31,6 +31,7 @@ export interface FaceMetrics {
 /** Aggregated apparent mood during a single answer window (client-side). */
 export interface CandidateMoodSnapshot {
   dominant: FaceEmotionDominant;
+  counts?: Record<FaceEmotionDominant, number>;
   averages: {
     happy: number;
     sad: number;
@@ -121,7 +122,11 @@ export interface FinalReport {
   hiringOutcome: FunnelOutcome;
   emotionalSummary: string;
   strengths: string[];
+  /** One description per strength explaining why it worked, parallel to strengths[]. */
+  strengthDescriptions: string[];
   weaknesses: string[];
+  /** One description per weakness explaining its impact, parallel to weaknesses[]. */
+  weaknessDescriptions: string[];
   interviewerNotes: string[];
   suggestedNextImprovements: string[];
 }

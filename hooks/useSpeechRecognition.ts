@@ -40,7 +40,44 @@ declare global {
   }
 }
 
-const FILLER_WORDS = ["um", "uh", "like", "you know", "actually"];
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Phrases are intentionally listed before their sub-words so they read clearly.
+ * Detection uses whole-word boundaries (\b) for all entries, so single words
+ * like "like" won't fire inside "likely", and multi-word phrases like "kind of"
+ * only fire when those words appear together.
+ */
+const FILLER_WORDS = [
+  // Hesitation sounds
+  "um", "uh", "er", "ah", "uhh", "umm", "uhm", "hmm", "mm", "eh",
+  "uh huh", "mm hmm",
+  // Classic fillers
+  "like", "you know", "kind of", "sort of", "basically", "i mean", "just",
+  "maybe", "i guess", "probably", "stuff", "things", "whatever", "anyway", "anyways",
+  "honestly", "frankly",
+  // Hedging phrases
+  "i think", "i feel like", "i suppose", "i would say", "i'd say",
+  "i guess you could say", "you know what i mean", "if you know what i mean",
+  "you get what i mean", "if that makes sense", "does that make sense",
+  "as it were", "if you will", "so to speak",
+  // Qualifiers
+  "more or less", "pretty much", "in a way", "in some ways", "in many ways",
+  "to be honest", "a little bit", "a bit",
+  // Compound filler phrases
+  "kind of like", "sort of like", "kind of just", "sort of just",
+  "just kind of", "just sort of",
+  "like you know", "you know like", "well you know",
+  "so yeah", "so like", "so um", "so uh",
+  "um so", "uh so", "uh well", "um well",
+  "like um", "and uh", "and um", "well um", "well uh",
+  // Trailing filler phrases
+  "and so on", "and everything", "or something", "or whatever", "or anything",
+  "or stuff like that", "and all that", "and things like that",
+  "and stuff like that", "and so forth", "i mean like"
+];
 
 export function useSpeechRecognition() {
   const [isSupported, setIsSupported] = useState(false);
@@ -173,9 +210,11 @@ export function useSpeechRecognition() {
 
   const metrics = useMemo<SpeechMetrics>(() => {
     const fullTranscript = `${transcript} ${interimTranscript}`.trim().toLowerCase();
-    const fillerWords = FILLER_WORDS.filter((word) => fullTranscript.includes(word));
+    const fillerWords = FILLER_WORDS.filter((word) =>
+      new RegExp(`\\b${escapeRegExp(word)}\\b`).test(fullTranscript)
+    );
     const fillerCount = fillerWords.reduce((count, word) => {
-      const matches = fullTranscript.match(new RegExp(word, "g"));
+      const matches = fullTranscript.match(new RegExp(`\\b${escapeRegExp(word)}\\b`, "g"));
       return count + (matches?.length ?? 0);
     }, 0);
     const words = fullTranscript.split(/\s+/).filter(Boolean).length;

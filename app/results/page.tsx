@@ -150,7 +150,7 @@ function ScoreCard({ label, value }: { label: keyof typeof SCORE_COLORS; value: 
   );
 }
 
-function ListItem({ item, tone }: { item: string; tone: "good" | "improve" }) {
+function ListItem({ item, description, tone }: { item: string; description: string; tone: "good" | "improve" }) {
   const isGood = tone === "good";
 
   return (
@@ -160,9 +160,7 @@ function ListItem({ item, tone }: { item: string; tone: "good" | "improve" }) {
       </div>
       <div>
         <p className="font-semibold text-ink">{item}</p>
-        <p className="mt-1 text-sm leading-6 text-slate-500">
-          {isGood ? "This helped your answer feel more credible." : "This would make the answer more concrete and easier to trust."}
-        </p>
+        <p className="mt-1 text-sm leading-6 text-slate-500">{description}</p>
       </div>
     </div>
   );
@@ -294,8 +292,8 @@ export default function ResultsPage() {
               <section className="p-6 sm:p-7">
                 <h2 className="text-lg font-semibold text-ink">What you did well</h2>
                 <div className="mt-6 space-y-7">
-                  {report.strengths.map((item) => (
-                    <ListItem key={item} item={item} tone="good" />
+                  {report.strengths.map((item, index) => (
+                    <ListItem key={item} item={item} description={report.strengthDescriptions[index] ?? ""} tone="good" />
                   ))}
                 </div>
               </section>
@@ -303,8 +301,8 @@ export default function ResultsPage() {
               <section className="border-t border-slate-200 p-6 sm:p-7 lg:border-l lg:border-t-0">
                 <h2 className="text-lg font-semibold text-ink">What to improve</h2>
                 <div className="mt-6 space-y-7">
-                  {report.weaknesses.map((item) => (
-                    <ListItem key={item} item={item} tone="improve" />
+                  {report.weaknesses.map((item, index) => (
+                    <ListItem key={item} item={item} description={report.weaknessDescriptions[index] ?? ""} tone="improve" />
                   ))}
                 </div>
               </section>

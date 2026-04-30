@@ -5,18 +5,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FeedbackPanel, type CoachingThought } from "@/components/feedback-panel";
 import { InterviewerAvatar } from "@/components/interviewer-avatar";
 import { TypingQuestion } from "@/components/typing-question";
-import { AnswerEvaluation, CandidateMoodSnapshot, InterviewSession, InterviewTurn } from "@/lib/interview-types";
-import { liveConfidenceFromSignals, pickDominantEmotion } from "@/lib/interview-scoring";
+import { AnswerEvaluation, CandidateMoodSnapshot, FaceEmotionDominant, FaceEmotionScores, InterviewSession, InterviewTurn } from "@/lib/interview-types";
+import { liveConfidenceFromSignals } from "@/lib/interview-scoring";
 import { useFaceTracking } from "@/hooks/useFaceTracking";
 import { InterviewerSpeechEngine, useInterviewerSpeech } from "@/hooks/useInterviewerSpeech";
 import { useSmoothedLiveMetric } from "@/hooks/useSmoothedLiveMetric";
 import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
+import { createEmptyMoodCounts, getDominantMoodFromCounts } from "@/lib/candidate-mood";
 import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
 import { useInterviewSession } from "@/lib/session-store";
 
 const TOTAL_QUESTIONS = 5;
 const ANSWER_SECONDS = 60;
 const QUESTION_HANDOFF_DELAY_MS = 500;
+const CANDIDATE_MOOD_SAMPLE_MS = 2000;
 
 type MainVideo = "interviewer" | "candidate";
 
@@ -55,6 +57,16 @@ function getSpeakingPaceLabel(wordsPerMinute: number) {
   }
 
   return "Ideal";
+}
+
+function createEmptyEmotionAccum() {
+  return {
+    happy: 0,
+    sad: 0,
+    nervous: 0,
+    frames: 0,
+    counts: createEmptyMoodCounts()
+  };
 }
 
 export default function InterviewPage() {
@@ -98,9 +110,10 @@ export default function InterviewPage() {
   const autoSubmittedRef = useRef(false);
   const submitAnswerRef = useRef<(() => void) | null>(null);
   const answerSubmissionChainRef = useRef<Promise<InterviewSession | null>>(Promise.resolve(null));
-  const answerEmotionAccumRef = useRef({ happy: 0, sad: 0, nervous: 0, frames: 0 });
+  const answerEmotionAccumRef = useRef(createEmptyEmotionAccum());
+  const latestCandidateEmotionRef = useRef(face.metrics.emotion);
   const latestAvatarEmotionRef = useRef(emotion);
-  const prevShowTranscriptRef = useRef(false);
+  const [displayedCandidateMood, setDisplayedCandidateMood] = useState<FaceEmotionDominant>(face.metrics.emotion.dominant);
 
   useEffect(() => {
     if (!session) {
@@ -126,6 +139,10 @@ export default function InterviewPage() {
   }, [emotion]);
 
   useEffect(() => {
+    latestCandidateEmotionRef.current = face.metrics.emotion;
+  }, [face.metrics.emotion]);
+
+  useEffect(() => {
     const timer = window.setInterval(() => {
       setDisplayedAvatarEmotion(latestAvatarEmotionRef.current);
     }, 1000);
@@ -136,23 +153,29 @@ export default function InterviewPage() {
   }, []);
 
   useEffect(() => {
-    if (showTranscript && !prevShowTranscriptRef.current) {
-      answerEmotionAccumRef.current = { happy: 0, sad: 0, nervous: 0, frames: 0 };
-    }
-    prevShowTranscriptRef.current = showTranscript;
-  }, [showTranscript]);
-
-  useEffect(() => {
     if (!showTranscript) {
       return;
     }
 
-    const emotion = face.metrics.emotion;
-    answerEmotionAccumRef.current.happy += emotion.happy;
-    answerEmotionAccumRef.current.sad += emotion.sad;
-    answerEmotionAccumRef.current.nervous += emotion.nervous;
-    answerEmotionAccumRef.current.frames += 1;
-  }, [face.metrics, showTranscript]);
+    answerEmotionAccumRef.current = createEmptyEmotionAccum();
+
+    const sampleMood = () => {
+      const emotionSnapshot: FaceEmotionScores = latestCandidateEmotionRef.current;
+      answerEmotionAccumRef.current.happy += emotionSnapshot.happy;
+      answerEmotionAccumRef.current.sad += emotionSnapshot.sad;
+      answerEmotionAccumRef.current.nervous += emotionSnapshot.nervous;
+      answerEmotionAccumRef.current.frames += 1;
+      answerEmotionAccumRef.current.counts[emotionSnapshot.dominant] += 1;
+      setDisplayedCandidateMood(emotionSnapshot.dominant);
+    };
+
+    sampleMood();
+    const timer = window.setInterval(sampleMood, CANDIDATE_MOOD_SAMPLE_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [showTranscript]);
 
   const currentTranscript = `${transcript} ${interimTranscript}`.trim();
   const visibleTranscript = showTranscript ? currentTranscript : "";
@@ -304,9 +327,10 @@ export default function InterviewPage() {
       sad: accum.sad / frameCount,
       nervous: accum.nervous / frameCount
     };
-    const moodDominant = pickDominantEmotion(averages.happy, averages.sad, averages.nervous);
+    const moodDominant = getDominantMoodFromCounts(accum.counts, latestCandidateEmotionRef.current.dominant);
     const candidateMood: CandidateMoodSnapshot = {
       dominant: moodDominant,
+      counts: { ...accum.counts },
       averages,
       framesSampled: accum.frames
     };
@@ -508,7 +532,7 @@ export default function InterviewPage() {
             </div>
             <p className="mt-7 text-sm text-slate-500">Eye Contact: {displayedEyeContact}</p>
             <p className="mt-2 text-sm font-medium text-slate-600 capitalize" aria-live="polite">
-              {face.metrics.emotion.dominant}
+              {displayedCandidateMood}
             </p>
           </div>
 
