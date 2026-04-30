@@ -634,7 +634,7 @@ export default function LandingPage() {
             >
               Pricing
             </button>
-            <div className="px-1 py-1" onClick={() => setMobileMenuOpen(false)}>
+            <div className="px-1 py-1">
               <TechSpecsButton variant="nav" />
             </div>
             <button
