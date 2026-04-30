@@ -57,20 +57,38 @@ export function speakingPaceStabilityScore(speakingPace: number) {
   return 40;
 }
 
-export function pickDominantEmotion(happy: number, sad: number, nervous: number): FaceEmotionDominant {
-  if (happy > sad && happy > nervous && happy > 18) {
-    return "happy";
-  }
+/**
+ * WPM scoring: ideal range is 115–145 wpm (returns 100).
+ * Penalises 2 points per wpm outside that band.
+ */
+export function wpmScore(wpm: number): number {
+  if (wpm >= 115 && wpm <= 145) return 100;
+  if (wpm < 115) return Math.max(0, 100 - (115 - wpm) * 2);
+  return Math.max(0, 100 - (wpm - 145) * 2);
+}
 
-  if (sad > nervous && sad > 18) {
-    return "sad";
-  }
+/**
+ * How much each facial expression contributes to the confidence calculation.
+ * "nervous" maps to the "anxious" bucket from the formula spec.
+ */
+const FACIAL_MULTIPLIER: Record<FaceEmotionDominant, number> = {
+  happy: 1.0,
+  neutral: 0.85,
+  nervous: 0.4,
+  sad: 0.3
+};
 
-  if (nervous > 40) {
-    return "nervous";
-  }
+export function pickDominantEmotion(happy: number, sad: number, nervous: number, neutral: number): FaceEmotionDominant {
+  // Apply minimum noise thresholds then pick the highest-scoring emotion.
+  // Neutral wins on a tie, which keeps the label stable during a calm, composed face.
+  const candidates: [FaceEmotionDominant, number][] = [
+    ["happy", happy > 18 ? happy : 0],
+    ["sad", sad > 18 ? sad : 0],
+    ["nervous", nervous > 40 ? nervous : 0],
+    ["neutral", neutral]
+  ];
 
-  return "neutral";
+  return candidates.reduce((best, current) => (current[1] > best[1] ? current : best))[0];
 }
 
 export function emotionConfidenceAdjustment(emotion: FaceEmotionScores): number {
@@ -95,22 +113,36 @@ export function emotionConfidenceAdjustment(emotion: FaceEmotionScores): number 
   return 0;
 }
 
+/**
+ * Live confidence score (0–100) based on the vFinal formula:
+ *
+ *   score = eye_contact × 0.45
+ *         + FACIAL_MULTIPLIER[expression] × 30
+ *         + wpm_score(wpm) × 0.15
+ *         + (100 − filler_score) × 0.10
+ *
+ * filler_score is normalised from raw filler count (5 fillers per point, max 100).
+ */
 export function liveConfidenceFromSignals(input: {
   role: JobRole;
   transcript: string;
   speechMetrics: SpeechMetrics;
   faceMetrics: FaceMetrics;
 }) {
-  const { role, transcript, speechMetrics, faceMetrics } = input;
-  const structure = detectStarStructure(transcript);
-  const relevance = keywordCoverageScore(transcript, getRoleExpectations(role));
-  const pace = speakingPaceStabilityScore(speechMetrics.speakingPace);
-  const fillerPenalty = Math.min(28, speechMetrics.fillerCount * 4);
+  const { speechMetrics, faceMetrics } = input;
+
   const eyeContact = faceMetrics.eyeContact;
+  const facialMultiplier = FACIAL_MULTIPLIER[faceMetrics.emotion.dominant];
+  const wpmVal = wpmScore(speechMetrics.speakingPace);
+  const fillerScore = Math.min(100, speechMetrics.fillerCount * 5);
 
-  const base = clampScore((pace * 0.18 + (100 - fillerPenalty) * 0.16 + eyeContact * 0.22 + structure * 0.2 + relevance * 0.24));
+  const raw =
+    eyeContact * 0.45 +
+    facialMultiplier * 30 +
+    wpmVal * 0.15 +
+    (100 - fillerScore) * 0.10;
 
-  return clampScore(base + emotionConfidenceAdjustment(faceMetrics.emotion));
+  return clampScore(raw);
 }
 
 export function confidenceFromMetrics(speechMetrics: SpeechMetrics, faceMetrics: FaceMetrics) {

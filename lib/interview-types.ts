@@ -18,6 +18,8 @@ export interface FaceEmotionScores {
   happy: number;
   sad: number;
   nervous: number;
+  /** Measured as 100 − max(happy, sad, nervous). High when no other emotion dominates. */
+  neutral: number;
   dominant: FaceEmotionDominant;
 }
 
@@ -36,6 +38,7 @@ export interface CandidateMoodSnapshot {
     happy: number;
     sad: number;
     nervous: number;
+    neutral: number;
   };
   framesSampled: number;
 }
@@ -91,6 +94,23 @@ export interface InterviewMemory {
   interviewerMood: string;
 }
 
+/**
+ * The semantic role each schedule slot plays in the interview. Drives prompt
+ * construction (new vs follow-up) and the empty-answer transformer's behavior.
+ */
+export type ScheduleSlotKind =
+  | { kind: "new" }
+  | { kind: "follow-up"; followsSlotIndex: number }
+  | { kind: "re-ask"; reasksSlotIndex: number };
+
+export interface ScheduleSlot {
+  /** Position of this slot in the running schedule. Re-numbered after empty-answer transforms. */
+  index: number;
+  kind: ScheduleSlotKind;
+  /** Generated question text. Null until the question has been generated (or built from the canned re-ask helper). */
+  question: string | null;
+}
+
 export interface InterviewSession {
   id: string;
   role: JobRole;
@@ -103,6 +123,11 @@ export interface InterviewSession {
   turns: InterviewTurn[];
   currentQuestion: string | null;
   questionQueue: string[];
+  /**
+   * Pre-planned schedule of upcoming questions. The base schedule is 5 slots
+   * ([new, new, fu->0, fu->1, new]); empty-answer transforms can grow it up to MAX_SLOTS.
+   */
+  schedule: ScheduleSlot[];
   interviewComplete: boolean;
   currentStage: HiringStage;
   hiringOutcome: FunnelOutcome | null;

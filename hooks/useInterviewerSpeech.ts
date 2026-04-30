@@ -9,6 +9,9 @@ import type { InterviewDifficulty } from "@/lib/interview-types";
 const ABSOLUTE_MAX_SPEECH_MS = 90_000;
 // When the fallback fires but the browser is still speaking, recheck after this delay.
 const FALLBACK_RECHECK_MS = 1500;
+// Max number of pre-fetched audio buffers we keep around. Bounded by the
+// worst-case interview length (MAX_SLOTS = 7) so memory cannot grow unbounded.
+const AUDIO_BUFFER_CACHE_LIMIT = 7;
 
 export type InterviewerSpeechEngine = "tts" | "elevenlabs";
 
@@ -38,6 +41,10 @@ export function useInterviewerSpeech(
   const playbackAudioRef = useRef<HTMLAudioElement | null>(null);
   const playbackObjectUrlRef = useRef<string | null>(null);
   const playbackReaderRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  // Map iteration order is insertion order; that gives us a tiny LRU.
+  // Key is the trimmed question text, value is the fully-buffered MP3 bytes.
+  const audioBufferCacheRef = useRef<Map<string, ArrayBuffer>>(new Map());
+  const inflightPrefetchRef = useRef<Map<string, Promise<void>>>(new Map());
 
   useEffect(() => {
     setSpeechSupported(typeof window !== "undefined" && "speechSynthesis" in window && "SpeechSynthesisUtterance" in window);
@@ -171,10 +178,159 @@ export function useInterviewerSpeech(
     }, 110);
   }, []);
 
+  const cacheAudioBuffer = useCallback((key: string, buffer: ArrayBuffer) => {
+    const cache = audioBufferCacheRef.current;
+    cache.delete(key);
+    cache.set(key, buffer);
+    while (cache.size > AUDIO_BUFFER_CACHE_LIMIT) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey === undefined) break;
+      cache.delete(oldestKey);
+    }
+  }, []);
+
+  /**
+   * Pre-fetches and buffers the ElevenLabs MP3 for `text` so a later `speak()`
+   * for the same text plays instantly with zero ElevenLabs roundtrip.
+   *
+   * Idempotent: repeat calls for the same text are coalesced into a single
+   * in-flight request and the result is reused for the cache.
+   */
+  const prefetchAudio = useCallback(
+    async (text: string, voiceIdOverride?: string | null): Promise<boolean> => {
+      const key = text.trim();
+      if (!key) return false;
+
+      const voiceId = (voiceIdOverride ?? elevenLabsVoiceId)?.trim();
+      if (!voiceId) return false;
+
+      if (audioBufferCacheRef.current.has(key)) {
+        return true;
+      }
+
+      const inflight = inflightPrefetchRef.current.get(key);
+      if (inflight) {
+        await inflight;
+        return audioBufferCacheRef.current.has(key);
+      }
+
+      const fetchPromise = (async () => {
+        try {
+          const res = await fetch("/api/interview/tts", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ text: key, voiceId, difficulty: difficulty ?? undefined })
+          });
+          if (!res.ok) return;
+          const buf = await res.arrayBuffer();
+          if (buf.byteLength > 0) {
+            cacheAudioBuffer(key, buf);
+          }
+        } catch {
+          // Cache miss is harmless: speak() will fall back to live streaming.
+        } finally {
+          inflightPrefetchRef.current.delete(key);
+        }
+      })();
+
+      inflightPrefetchRef.current.set(key, fetchPromise);
+      await fetchPromise;
+      return audioBufferCacheRef.current.has(key);
+    },
+    [cacheAudioBuffer, difficulty, elevenLabsVoiceId]
+  );
+
+  const playBufferedAudio = useCallback(
+    async (cleanText: string, buffer: ArrayBuffer): Promise<boolean> => {
+      const isDev = process.env.NODE_ENV !== "production";
+      const startedAt = isDev ? performance.now() : 0;
+
+      try {
+        const blob = new Blob([buffer.slice(0)], { type: "audio/mpeg" });
+        const objectUrl = URL.createObjectURL(blob);
+        const audio = new Audio();
+        audio.src = objectUrl;
+        playbackAudioRef.current = audio;
+        playbackObjectUrlRef.current = objectUrl;
+
+        await ensureAudioGraph();
+        if (!audioContextRef.current || !meterGainRef.current) {
+          stopPlaybackAudio();
+          return false;
+        }
+
+        return await new Promise<boolean>((resolve) => {
+          let hasResolved = false;
+          let fallbackTimer: number | null = null;
+          const startTimestamp = Date.now();
+          const estimatedDuration = estimateSpeechDurationMs(cleanText);
+
+          const finish = (wantBrowserFallback: boolean) => {
+            if (hasResolved) return;
+            hasResolved = true;
+            if (fallbackTimer !== null) {
+              window.clearTimeout(fallbackTimer);
+              fallbackTimer = null;
+            }
+            stop();
+            resolve(!wantBrowserFallback);
+          };
+
+          const scheduleFallback = (delay: number) => {
+            if (fallbackTimer !== null) window.clearTimeout(fallbackTimer);
+            fallbackTimer = window.setTimeout(() => {
+              const stillPlaying =
+                playbackAudioRef.current !== null && !playbackAudioRef.current.paused && !playbackAudioRef.current.ended;
+              const elapsed = Date.now() - startTimestamp;
+              if (stillPlaying && elapsed < ABSOLUTE_MAX_SPEECH_MS) {
+                scheduleFallback(FALLBACK_RECHECK_MS);
+                return;
+              }
+              finish(false);
+            }, delay);
+          };
+
+          scheduleFallback(estimatedDuration);
+
+          audio.onplay = () => {
+            if (isDev) {
+              const playStartMs = Math.round(performance.now() - startedAt);
+              console.log(`[tts client] cached play_start_ms=${playStartMs}`);
+            }
+            setIsSpeaking(true);
+            startPolling();
+            runSyntheticMouthAnimationLoop();
+          };
+
+          audio.onended = () => finish(false);
+          audio.onerror = () => {
+            setError("The voice playback failed.");
+            finish(true);
+          };
+
+          void audio.play().catch(() => finish(true));
+        });
+      } catch {
+        stopPlaybackAudio();
+        return false;
+      }
+    },
+    [ensureAudioGraph, runSyntheticMouthAnimationLoop, startPolling, stop, stopPlaybackAudio]
+  );
+
   const speakWithElevenLabs = useCallback(
     async (cleanText: string, voiceId: string): Promise<boolean> => {
       const isDev = process.env.NODE_ENV !== "production";
       const requestStartedAt = isDev ? performance.now() : 0;
+
+      // Fast path: a prior prefetchAudio() already buffered the bytes.
+      const cached = audioBufferCacheRef.current.get(cleanText);
+      if (cached) {
+        const ok = await playBufferedAudio(cleanText, cached);
+        if (ok) return true;
+        // Bad cache entry — fall through to live stream and forget it.
+        audioBufferCacheRef.current.delete(cleanText);
+      }
 
       try {
         const res = await fetch("/api/interview/tts", {
@@ -538,6 +694,7 @@ export function useInterviewerSpeech(
     mouthLevel,
     emotion,
     speak,
+    prefetchAudio,
     stop,
     status
   };

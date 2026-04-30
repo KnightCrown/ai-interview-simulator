@@ -1,16 +1,20 @@
 import { describe, expect, it } from "vitest";
 import {
+  MAX_SLOTS,
   appendQueuedQuestion,
+  buildBaseSchedule,
   buildFallbackEvaluation,
   buildFallbackFinalReport,
   buildFallbackQuestion,
   buildSession,
   getNextQueuedQuestionTargetIndex,
+  getReaskedSlotIndices,
   normalizeAnswerEvaluation,
-  normalizeFinalReport
+  normalizeFinalReport,
+  transformScheduleForEmptyAnswer
 } from "@/lib/interview-engine";
 import { advanceHiringStage, liveConfidenceFromSignals } from "@/lib/interview-scoring";
-import { FaceMetrics, InterviewSession } from "@/lib/interview-types";
+import { FaceMetrics, InterviewSession, ScheduleSlot } from "@/lib/interview-types";
 import { JOB_ROLES, SAMPLE_RESUME, getRoleExpectations } from "@/lib/sample-data";
 
 function sampleFace(overrides: Partial<FaceMetrics> = {}): FaceMetrics {
@@ -18,7 +22,7 @@ function sampleFace(overrides: Partial<FaceMetrics> = {}): FaceMetrics {
     eyeContact: 80,
     headStability: 80,
     engagementScore: 80,
-    emotion: { happy: 12, sad: 12, nervous: 12, dominant: "neutral" }
+    emotion: { happy: 12, sad: 12, nervous: 12, neutral: 76, dominant: "neutral" }
   };
 
   return {
@@ -102,15 +106,47 @@ describe("buildFallbackQuestion", () => {
     expect(question).toContain("tradeoff");
   });
 
-  it("uses a re-ask fallback when the prior answer was empty on a follow-up stage", () => {
-    const session = buildSession("Software Engineer", "Medium", "Skip Resume", null);
-    const question = buildFallbackQuestion(session, { targetTurnIndex: 1 });
+  it("uses a re-ask fallback when the followed slot's answer was empty on a follow-up stage", () => {
+    // Slot 2 in the base schedule is { kind: "follow-up", followsSlotIndex: 0 }.
+    // If turn[0] has no substantive answer, the fallback should call that out.
+    const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
+    const session: InterviewSession = {
+      ...base,
+      turns: [
+        {
+          id: "t1",
+          question: "Q1",
+          transcript: "",
+          durationSeconds: 5,
+          speechMetrics: { fillerCount: 0, fillerWords: [], speakingPace: 120 },
+          faceMetrics: sampleFace(),
+          evaluation: {
+            clarity: 50,
+            relevance: 50,
+            structure: 50,
+            confidence: 50,
+            engagement: 50,
+            liveConfidence: 50,
+            feedback: "",
+            missedOpportunity: "",
+            missingResumeHighlights: [],
+            missedOpportunityDetails: [],
+            improvedAnswer: "",
+            rewriteHighlights: [],
+            interviewerReaction: "",
+            perceivedTone: "",
+            pressureLabel: ""
+          }
+        }
+      ]
+    };
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 2 });
 
     expect(question).toContain("haven't spoken");
     expect(question).toContain("Software Engineer");
   });
 
-  it("question 4 fallback weaves in feedback from the prior evaluated answer", () => {
+  it("question 4 fallback (follow-up to slot 1) weaves in the followed turn's feedback", () => {
     const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
     const session = {
       ...base,
@@ -170,10 +206,12 @@ describe("buildFallbackQuestion", () => {
 
     const question = buildFallbackQuestion(session, { targetTurnIndex: 3 });
 
-    expect(question).toContain("Need more metrics from Q1.");
+    // Slot 3 is now { kind: "follow-up", followsSlotIndex: 1 }, so the fallback
+    // should pull feedback from turn[1] (Q2), not the legacy turns.length-2 hack.
+    expect(question).toContain("Feedback after Q2.");
   });
 
-  it("question 3 fallback remains a fresh question", () => {
+  it("question 5 (final 'new' slot) remains a fresh question, not a follow-up", () => {
     const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
     const session = {
       ...base,
@@ -231,10 +269,12 @@ describe("buildFallbackQuestion", () => {
       ]
     };
 
-    const question = buildFallbackQuestion(session, { targetTurnIndex: 2 });
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 4 });
 
+    // Slot 4 is { kind: "new" }, so it should not splice in any prior-feedback tail.
     expect(question).not.toContain("Earlier you mentioned");
     expect(question).not.toContain("Need more metrics from Q1.");
+    expect(question).not.toContain("Feedback after Q2.");
   });
 });
 
@@ -262,7 +302,11 @@ describe("parallel-path placeholder evaluation", () => {
     pressureLabel: ""
   };
 
-  it("produces a valid follow-up question when the latest turn carries a placeholder evaluation", () => {
+  it("produces a valid follow-up question when the followed turn carries a placeholder evaluation", () => {
+    // Slot 2 is { kind: "follow-up", followsSlotIndex: 0 }. Even when turn[0]'s
+    // evaluation is still the parallel-path placeholder (empty strings, neutral
+    // scores), the follow-up fallback must produce a real question grounded in
+    // the role.
     const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
     const session = {
       ...base,
@@ -279,14 +323,14 @@ describe("parallel-path placeholder evaluation", () => {
       ]
     };
 
-    const question = buildFallbackQuestion(session, { targetTurnIndex: 1 });
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 2 });
 
-    expect(question).toContain("tradeoff");
+    expect(question).toContain("Software Engineer");
     expect(question.length).toBeGreaterThan(20);
     expect(question).not.toContain("haven't spoken");
   });
 
-  it("produces a valid fresh-stage question when the prior turn carries a placeholder evaluation", () => {
+  it("produces a valid fresh closing-stage question regardless of placeholder evaluations earlier in the run", () => {
     const base = buildSession("Software Engineer", "Medium", "Skip Resume", null);
     const session = {
       ...base,
@@ -312,9 +356,10 @@ describe("parallel-path placeholder evaluation", () => {
       ]
     };
 
-    const question = buildFallbackQuestion(session, { targetTurnIndex: 2 });
+    // Slot 4 is the final { kind: "new" } closing slot in the base schedule.
+    const question = buildFallbackQuestion(session, { targetTurnIndex: 4 });
 
-    expect(question).toMatch(/Software Engineer|slipping|recover/);
+    expect(question).toMatch(/Software Engineer|next round|hiring/);
     expect(question.length).toBeGreaterThan(20);
   });
 });
@@ -469,6 +514,7 @@ describe("buildFallbackFinalReport", () => {
       startedAt: new Date().toISOString(),
       currentQuestion: null,
       questionQueue: [],
+      schedule: [],
       interviewComplete: true,
       currentStage: "Final Round",
       hiringOutcome: "Selected",
@@ -523,5 +569,118 @@ describe("buildFallbackFinalReport", () => {
     expect(report.hiringOutcome).toBe("Selected");
     expect(report.emotionalSummary.length).toBeGreaterThan(10);
     expect(report.interviewerNotes.length).toBeGreaterThan(0);
+  });
+});
+
+describe("buildBaseSchedule", () => {
+  it("returns the canonical 5-slot schedule [new, new, fu→0, fu→1, new]", () => {
+    const schedule = buildBaseSchedule();
+    expect(schedule).toHaveLength(5);
+    expect(schedule[0].kind).toEqual({ kind: "new" });
+    expect(schedule[1].kind).toEqual({ kind: "new" });
+    expect(schedule[2].kind).toEqual({ kind: "follow-up", followsSlotIndex: 0 });
+    expect(schedule[3].kind).toEqual({ kind: "follow-up", followsSlotIndex: 1 });
+    expect(schedule[4].kind).toEqual({ kind: "new" });
+    schedule.forEach((slot, idx) => {
+      expect(slot.index).toBe(idx);
+      expect(slot.question).toBeNull();
+    });
+  });
+});
+
+describe("transformScheduleForEmptyAnswer", () => {
+  // Helper to compare schedules by kind and follow/reask targets only — index
+  // numbers are re-assigned by the transform and shouldn't be brittle in tests.
+  function shape(schedule: ScheduleSlot[]) {
+    return schedule.map((slot) => slot.kind);
+  }
+
+  it("Empty Q2: removes fu→1, inserts reask→1 after slot 1, appends fu→1", () => {
+    const result = transformScheduleForEmptyAnswer(buildBaseSchedule(), 1);
+    expect(shape(result)).toEqual([
+      { kind: "new" },
+      { kind: "new" },
+      { kind: "re-ask", reasksSlotIndex: 1 },
+      { kind: "follow-up", followsSlotIndex: 0 },
+      { kind: "new" },
+      { kind: "follow-up", followsSlotIndex: 1 }
+    ]);
+    expect(result).toHaveLength(6);
+    result.forEach((slot, idx) => expect(slot.index).toBe(idx));
+  });
+
+  it("Empty Q1: removes fu→0, inserts reask→0 after slot 0, appends fu→0", () => {
+    const result = transformScheduleForEmptyAnswer(buildBaseSchedule(), 0);
+    expect(shape(result)).toEqual([
+      { kind: "new" },
+      { kind: "re-ask", reasksSlotIndex: 0 },
+      { kind: "new" },
+      { kind: "follow-up", followsSlotIndex: 1 },
+      { kind: "new" },
+      { kind: "follow-up", followsSlotIndex: 0 }
+    ]);
+    expect(result).toHaveLength(6);
+  });
+
+  it("Empty Q4 (a follow-up itself): no displaced follow-up, just inserts reask→3", () => {
+    const result = transformScheduleForEmptyAnswer(buildBaseSchedule(), 3);
+    expect(shape(result)).toEqual([
+      { kind: "new" },
+      { kind: "new" },
+      { kind: "follow-up", followsSlotIndex: 0 },
+      { kind: "follow-up", followsSlotIndex: 1 },
+      { kind: "re-ask", reasksSlotIndex: 3 },
+      { kind: "new" }
+    ]);
+    expect(result).toHaveLength(6);
+  });
+
+  it("does not transform a slot that was itself a re-ask (no second-chance loop)", () => {
+    const baseAfterFirstReask = transformScheduleForEmptyAnswer(buildBaseSchedule(), 1);
+    // Slot 2 in the new schedule is now { kind: "re-ask", reasksSlotIndex: 1 }.
+    const result = transformScheduleForEmptyAnswer(baseAfterFirstReask, 2);
+    expect(result).toBe(baseAfterFirstReask);
+  });
+
+  it("does not transform when the slot has already been re-asked once", () => {
+    // Build a schedule where slot 1 has previously been re-asked, then slot 1
+    // is empty again. The 1-per-question cap should reject the new transform.
+    const previouslyReasked = transformScheduleForEmptyAnswer(buildBaseSchedule(), 1);
+    // Reset the empty slot to a fresh "new" so the second call can target it again
+    // without being rejected as a re-ask.
+    const reasked = getReaskedSlotIndices(previouslyReasked);
+    const result = transformScheduleForEmptyAnswer(previouslyReasked, 1, reasked);
+    expect(result).toBe(previouslyReasked);
+  });
+
+  it("respects MAX_SLOTS = 7 cap and rejects further insertions", () => {
+    // First empty answer: 5 -> 6 slots.
+    let working = transformScheduleForEmptyAnswer(buildBaseSchedule(), 1);
+    // Second empty answer on slot 0 (Q1): 6 -> 7 slots.
+    working = transformScheduleForEmptyAnswer(working, 0);
+    expect(working.length).toBe(MAX_SLOTS);
+
+    // Third empty answer would push to 8 — must be rejected.
+    // We need a slot that is not itself a re-ask and hasn't been re-asked yet.
+    // After the two transforms, slots 4 (new) is fresh. Mark it empty.
+    const reasked = getReaskedSlotIndices(working);
+    const result = transformScheduleForEmptyAnswer(working, 4, reasked);
+    expect(result).toBe(working);
+    expect(result.length).toBe(MAX_SLOTS);
+  });
+});
+
+describe("getReaskedSlotIndices", () => {
+  it("collects every re-asked slot index from the schedule", () => {
+    let schedule = transformScheduleForEmptyAnswer(buildBaseSchedule(), 1);
+    schedule = transformScheduleForEmptyAnswer(schedule, 0);
+    const reasked = getReaskedSlotIndices(schedule);
+    expect(reasked.has(0)).toBe(true);
+    expect(reasked.has(1)).toBe(true);
+    expect(reasked.size).toBe(2);
+  });
+
+  it("returns an empty set for the base schedule", () => {
+    expect(getReaskedSlotIndices(buildBaseSchedule()).size).toBe(0);
   });
 });

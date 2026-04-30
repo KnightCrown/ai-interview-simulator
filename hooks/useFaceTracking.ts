@@ -8,6 +8,7 @@ const INITIAL_EMOTION: FaceEmotionScores = {
   happy: 0,
   sad: 0,
   nervous: 0,
+  neutral: 100,
   dominant: "neutral"
 };
 
@@ -215,11 +216,16 @@ export function useFaceTracking(preferredDeviceId?: string | null) {
           const blinkFactor = eyeOpenAvg < 0.009 ? 1 : 0;
           const nervous = clampLocal(blinkFactor * 55 + blinkBurstScore * 0.35 + (100 - headStabilityRaw) * 0.38, 0, 100);
 
-          const dominant = pickDominantEmotion(happy, sad, nervous);
+          // Neutral is the inverse of the strongest active emotion.
+          // High when the face is calm and composed; drops as any emotion rises.
+          const neutral = clampLocal(100 - Math.max(happy, sad, nervous), 0, 100);
+
+          const dominant = pickDominantEmotion(happy, sad, nervous, neutral);
           const emotion: FaceEmotionScores = {
             happy,
             sad,
             nervous,
+            neutral,
             dominant
           };
 

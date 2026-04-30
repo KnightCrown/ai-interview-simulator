@@ -8,8 +8,11 @@ import {
   InterviewTurn,
   JobRole,
   ResumeProfile,
+  ScheduleSlot,
+  ScheduleSlotKind,
   SpeechMetrics
 } from "@/lib/interview-types";
+import { buildReaskQuestion, pickRandomReaction } from "@/lib/empty-answer-responses";
 import {
   advanceHiringStage,
   buildImprovedAnswer,
@@ -39,12 +42,12 @@ function buildInterviewerReaction(input: {
 }) {
   const { role, liveConfidence, previousWeakAreas, strictness } = input;
 
-  if (liveConfidence >= 80) {
-    return `I'm hearing real strength for this ${role} interview. I trust the direction, and now I want to pressure-test the depth behind it.`;
-  }
-
   if (strictness >= 70 || previousWeakAreas.length > 0) {
     return `I'm still concerned about ${(previousWeakAreas[0] ?? "depth").toLowerCase()}. I need stronger evidence before I would feel confident moving this forward.`;
+  }
+
+  if (liveConfidence >= 80) {
+    return `I'm hearing real strength for this ${role} interview. I trust the direction, and now I want to pressure-test the depth behind it.`;
   }
 
   if (liveConfidence <= 50) {
@@ -54,18 +57,63 @@ function buildInterviewerReaction(input: {
   return "I'm interested, but I'm still looking for clearer personal ownership and a sharper link between the work and the outcome.";
 }
 
+/**
+ * Resolve the slot kind for the question being generated. When the caller
+ * supplies an explicit `slotKind`, that wins. Otherwise the slot is looked up
+ * in the session's schedule. If neither is available (legacy callers), we fall
+ * back to the legacy fixed pattern: slots 1 and 3 were follow-ups, others new.
+ */
+export function resolveSlotKind(
+  session: Pick<InterviewSession, "schedule">,
+  targetSlotIndex: number,
+  override?: ScheduleSlotKind
+): ScheduleSlotKind {
+  if (override) {
+    return override;
+  }
+  const slot = session.schedule?.[targetSlotIndex];
+  if (slot) {
+    return slot.kind;
+  }
+  if (targetSlotIndex === 2) {
+    return { kind: "follow-up", followsSlotIndex: 0 };
+  }
+  if (targetSlotIndex === 3) {
+    return { kind: "follow-up", followsSlotIndex: 1 };
+  }
+  return { kind: "new" };
+}
+
 export function buildFallbackQuestion(
   session: InterviewSession,
-  options: { targetTurnIndex?: number; pendingAnswer?: string | null } = {}
+  options: {
+    targetTurnIndex?: number;
+    pendingAnswer?: string | null;
+    slotKind?: ScheduleSlotKind;
+  } = {}
 ) {
   const { role, turns, memory, difficulty } = session;
   const stage = options.targetTurnIndex ?? turns.length;
+  const slotKind = resolveSlotKind(session, stage, options.slotKind);
+
+  // Re-ask slots are built deterministically from the canned preamble + the
+  // original question text in [`lib/empty-answer-responses.ts`](lib/empty-answer-responses.ts).
+  if (slotKind.kind === "re-ask") {
+    const sourceTurn = turns[slotKind.reasksSlotIndex];
+    const originalQuestion = sourceTurn?.question ?? "";
+    return buildReaskQuestion(originalQuestion);
+  }
+
   const previousAnswer = options.pendingAnswer?.trim() || turns.at(-1)?.transcript || "";
   const previousWeakArea = memory.weakAreas[0];
-  const isFollowUpQuestion = stage === 1 || stage === 3;
+  const isFollowUpQuestion = slotKind.kind === "follow-up";
 
-  if (isFollowUpQuestion && !isTranscriptSubstantive(previousAnswer)) {
-    return `I still need a real answer to what I asked—you haven't spoken to it yet. Let me ask again directly: give me one concrete ${role} example where you owned the outcome, what constraint you faced, and what measurably changed. I am listening for specifics, not a headline.`;
+  if (isFollowUpQuestion) {
+    const followsTurn = turns[slotKind.followsSlotIndex];
+    const followedAnswer = followsTurn?.transcript?.trim() ?? "";
+    if (!isTranscriptSubstantive(followedAnswer)) {
+      return `I still need a real answer to what I asked—you haven't spoken to it yet. Let me ask again directly: give me one concrete ${role} example where you owned the outcome, what constraint you faced, and what measurably changed. I am listening for specifics, not a headline.`;
+    }
   }
 
   const roleSignals = getRoleExpectations(role).join(", ");
@@ -85,38 +133,36 @@ export function buildFallbackQuestion(
   } satisfies Record<InterviewSession["difficulty"], { opening: string; followUp: string }>;
   const direction = difficultyDirections[difficulty] ?? difficultyDirections.Medium;
 
-  const prompts: Record<number, string> = {
+  if (slotKind.kind === "follow-up") {
+    const followsTurn = turns[slotKind.followsSlotIndex];
+    const followedAnswer = followsTurn?.transcript?.trim() ?? "";
+    const basePrompt = `Following up on what you just said about that ${role} work — what tradeoff did you have to manage, and how did you decide? ${direction.followUp}`;
+
+    let tail = "";
+    if (memory.strictness >= 70 && previousWeakArea) {
+      tail = ` Earlier you left me wanting more around ${previousWeakArea}. Address that directly.`;
+    } else if (followedAnswer) {
+      tail = ` Earlier you mentioned ${followedAnswer.split(" ").slice(0, 8).join(" ")}... Can you expand on that?`;
+    }
+
+    const priorTurnFeedback = followsTurn?.evaluation?.feedback?.trim();
+    if (priorTurnFeedback) {
+      tail = `${tail} You earlier reflected: ${priorTurnFeedback}`;
+    }
+
+    return `${basePrompt}${tail}`;
+  }
+
+  // slotKind.kind === "new": pick a stage-appropriate fallback by index.
+  const newPrompts: Record<number, string> = {
     0: `Walk me through ${direction.opening} project that best proves you can succeed as a ${role}. I am listening for ${roleSignals}.`,
-    1: `Earlier you mentioned that work. What tradeoff did you have to manage, and how did you decide? ${direction.followUp}`,
-    2: `If that project started slipping, how would you communicate risk and recover momentum in a ${role} role? ${direction.followUp}`,
-    3: `You have been strongest when you sound concrete. What would you do differently if you revisited that situation today? ${direction.followUp}`,
+    1: `Tell me about a different ${role} situation where you had to make a real decision. ${direction.followUp}`,
+    2: `If a ${role} project you owned started slipping, how would you communicate risk and recover momentum? ${direction.followUp}`,
+    3: `What is a moment in your ${role} work that you would handle differently today, and why? ${direction.followUp}`,
     4: `Final question: why should a hiring team move you to the next round for this ${role} role? ${difficulty === "Hard" ? "Give me evidence that would survive a skeptical debrief." : ""}`
   };
 
-  const prompt = prompts[stage] ?? prompts[4];
-
-  if (stage === 0 || !isFollowUpQuestion) {
-    return prompt;
-  }
-
-  let tail = "";
-
-  if (stage > 0 && previousAnswer) {
-    if (memory.strictness >= 70 && previousWeakArea) {
-      tail = ` Earlier you left me wanting more around ${previousWeakArea}. Address that directly.`;
-    } else {
-      tail = ` Earlier you mentioned ${previousAnswer.split(" ").slice(0, 8).join(" ")}... Can you expand on that?`;
-    }
-  }
-
-  if (stage === 3 && turns.length >= 2) {
-    const priorInterviewerFeedback = turns[turns.length - 2]?.evaluation?.feedback?.trim();
-    if (priorInterviewerFeedback) {
-      tail = `${tail} In your prior feedback to the candidate (after the answer before their last one), you said: ${priorInterviewerFeedback}`;
-    }
-  }
-
-  return `${prompt}${tail}`;
+  return newPrompts[stage] ?? newPrompts[4];
 }
 
 export function buildFallbackEvaluation(input: {
@@ -175,15 +221,9 @@ export function buildFallbackEvaluation(input: {
   };
 }
 
-const EMPTY_ANSWER_REACTIONS = [
-  "Nothing came back. I don't know if they misunderstood the question or just aren't ready, but I can't assess someone who won't engage.",
-  "Silence isn't an answer. I need something concrete to work with — right now there's nothing to evaluate and that's a real problem.",
-  "That was a non-starter. I'm sitting here waiting for substance and getting none. It's hard to advocate for someone who won't show up in the moment.",
-  "I have no idea what they're thinking. If they can't respond to a direct question, I have to question whether they're prepared for this role at all.",
-  "This is stalling the whole process. I need them to engage — give me one example, one thought, anything — or there's genuinely nothing I can do with this.",
-  "A blank submission tells me more than a weak answer would. It signals disengagement, and that's very hard to overlook at this stage.",
-  "I asked a straightforward question and got nothing. That's not nerves — that's a gap I can't bridge on my end."
-];
+// EMPTY_ANSWER_REACTIONS now lives in [`lib/empty-answer-responses.ts`](lib/empty-answer-responses.ts)
+// so that the client can use the same canned list to render an instant on-screen
+// reaction without waiting on OpenAI.
 
 const EMPTY_ANSWER_FEEDBACK = [
   "You submitted without speaking to the question. In a real interview loop that registers as disengagement — even a rough, imperfect answer is far better than silence. Next time, lead with one concrete example before anything else.",
@@ -232,7 +272,7 @@ function buildEmptyAnswerEvaluation(input: {
     missedOpportunityDetails,
     improvedAnswer,
     rewriteHighlights: buildRewriteHighlights(transcript, improvedAnswer),
-    interviewerReaction: pickRandom(EMPTY_ANSWER_REACTIONS),
+    interviewerReaction: pickRandomReaction(),
     perceivedTone: "Disengaged / non-responsive",
     pressureLabel: derivePressureLabel(liveConfidence)
   };
@@ -513,69 +553,97 @@ export function normalizeFinalReport(parsed: Partial<FinalReport>, fallback: Fin
   };
 }
 
-function buildSequentialQuestionInstructions(session: InterviewSession, targetTurnIndex: number) {
+function buildSequentialQuestionInstructions(
+  session: InterviewSession,
+  targetSlotIndex: number,
+  slotKind: ScheduleSlotKind
+) {
   const { role, turns } = session;
-  const isFollowUpQuestion = targetTurnIndex === 1 || targetTurnIndex === 3;
-  const lastAnswer = turns.at(-1)?.transcript?.trim() ?? "";
-  const lastAnswerEmpty = !isTranscriptSubstantive(lastAnswer);
 
-  if (targetTurnIndex === 0) {
-    return `SEQUENTIAL QUESTION RULES — Question 1 only:
+  if (slotKind.kind === "new") {
+    if (targetSlotIndex === 0) {
+      return `SEQUENTIAL QUESTION RULES — Question 1 only:
 - Ground the question in the job role, resume/CV context, difficulty, and role expectation signals below.
 - Do not reference any prior interview answers, transcripts, or feedback (there are none yet).
 - Do not pretend the candidate already spoke.`;
+    }
+
+    return `SEQUENTIAL QUESTION RULES — Question ${targetSlotIndex + 1}:
+- This question should be a fresh, standalone question (not a direct follow-up).
+- Keep it role-specific and resume-aware, but do NOT anchor it to the immediately previous answer as a direct follow-up.
+- You MUST still use prior interview context (earlier questions and answers) to avoid repeating what has already been covered.
+- Introduce a new angle or competency that has not been adequately tested yet.
+- Do not greet/reintroduce yourself or use filler openers.`;
   }
 
-  if (isFollowUpQuestion && lastAnswerEmpty) {
-    return `SEQUENTIAL QUESTION RULES — Question ${targetTurnIndex + 1}:
-- The candidate did NOT provide a substantive answer to your previous question (blank, silence, or empty submission).
-- Your question MUST open by stating clearly that they have not answered what you asked (firm but professional—no sarcasm).
-- Briefly restate or paraphrase the core of your prior question, then ask it again in fresh wording.
-- Insist on a concrete, spoken answer with specifics relevant to ${JSON.stringify(role)}. Do not invent substance from their prior "answer"—there was none to build on.
+  if (slotKind.kind === "re-ask") {
+    // Re-ask slots are built deterministically and never reach this function in
+    // generateQuestion, but keep a defensive branch so future direct callers
+    // (or test fixtures) get a sensible prompt.
+    const sourceTurn = turns[slotKind.reasksSlotIndex];
+    const sourceQuestion = sourceTurn?.question ?? "";
+    return `SEQUENTIAL QUESTION RULES — Re-ask of question ${slotKind.reasksSlotIndex + 1}:
+- The candidate did not provide a substantive answer to question ${slotKind.reasksSlotIndex + 1}.
+- Re-ask the same competency with a brief, professional preamble and lightly different wording.
+- Original question text: ${JSON.stringify(sourceQuestion)}
 - Do not greet, thank, or use pleasantries.`;
   }
 
-  if (!isFollowUpQuestion) {
-    const emptyPriorNote = lastAnswerEmpty
-      ? `
-- The candidate's immediately prior answer was missing or non-substantive. Acknowledge that briefly if appropriate, but move forward with a new competency—do not pretend they answered well.
-`
-      : "";
+  // slotKind.kind === "follow-up"
+  const followsTurn = turns[slotKind.followsSlotIndex];
+  const followedAnswer = followsTurn?.transcript?.trim() ?? "";
+  const followedQuestion = followsTurn?.question?.trim() ?? "";
+  const followedAnswerEmpty = !isTranscriptSubstantive(followedAnswer);
 
-    return `SEQUENTIAL QUESTION RULES — Question ${targetTurnIndex + 1}:
-- This question should be a fresh, standalone question (not a direct follow-up).
-- Keep it role-specific and resume-aware, but do NOT anchor it to the immediately previous answer as a direct follow-up.
-- You MUST still use prior interview context (earlier questions, answers, and feedback) to avoid repeating what has already been covered.
-- Introduce a new angle or competency that has not been adequately tested yet, similar to how a real interviewer broadens coverage across the interview.
-- If a competency has already been explored deeply, move to another relevant area instead of re-asking the same thing.
-- Do not greet/reintroduce yourself or use filler openers.${emptyPriorNote}`;
+  if (followedAnswerEmpty) {
+    // Should not normally happen — empty answers route through transformScheduleForEmptyAnswer
+    // and become re-ask slots before they reach generateQuestion. This branch is a safety net.
+    return `SEQUENTIAL QUESTION RULES — Question ${targetSlotIndex + 1}:
+- The candidate's answer to question ${slotKind.followsSlotIndex + 1} was empty or non-substantive.
+- Briefly note that they did not address it, then ask a fresh follow-up that probes the same competency.
+- Insist on a concrete, spoken answer with specifics relevant to ${JSON.stringify(role)}.
+- Do not greet, thank, or use pleasantries.`;
   }
 
-  return `SEQUENTIAL QUESTION RULES — Question ${targetTurnIndex + 1}:
-- This question must be a direct follow-up to what the candidate just said.
-- Probe deeper, clarify tradeoffs, challenge assumptions, or pressure-test evidence from the latest answer.
-- Candidate's most recent answer: ${JSON.stringify(lastAnswer)}
-- Keep the job role and resume/CV context in mind: role ${JSON.stringify(role)}`;
+  return `SEQUENTIAL QUESTION RULES — Question ${targetSlotIndex + 1}:
+- This question must be a direct follow-up to the candidate's answer to question ${slotKind.followsSlotIndex + 1}.
+- Probe deeper, clarify tradeoffs, challenge assumptions, or pressure-test evidence from THAT specific answer (not necessarily the most recent answer).
+- Question ${slotKind.followsSlotIndex + 1} that they answered: ${JSON.stringify(followedQuestion)}
+- Their answer to question ${slotKind.followsSlotIndex + 1}: ${JSON.stringify(followedAnswer)}
+- Keep the job role and resume/CV context in mind: role ${JSON.stringify(role)}.
+- Do not greet/reintroduce yourself or use filler openers.`;
 }
 
 export async function generateQuestion(input: {
   session: InterviewSession;
   targetTurnIndex?: number;
   pendingAnswer?: string | null;
+  slotKind?: ScheduleSlotKind;
 }) {
   const targetTurnIndex = input.targetTurnIndex ?? input.session.turns.length;
+  const slotKind = resolveSlotKind(input.session, targetTurnIndex, input.slotKind);
+
+  // Re-ask slots are deterministic — never call OpenAI for them. The instant-build
+  // path also keeps audio prefetch viable the moment we know the answer was empty.
+  if (slotKind.kind === "re-ask") {
+    const sourceTurn = input.session.turns[slotKind.reasksSlotIndex];
+    return buildReaskQuestion(sourceTurn?.question ?? "");
+  }
+
   const fallback = buildFallbackQuestion(input.session, {
     targetTurnIndex,
-    pendingAnswer: input.pendingAnswer
+    pendingAnswer: input.pendingAnswer,
+    slotKind
   });
   const roleExpectations = getRoleExpectations(input.session.role);
   const preparedQuestions = [input.session.currentQuestion, ...(input.session.questionQueue ?? [])].filter(Boolean);
-  const sequentialInstructions = buildSequentialQuestionInstructions(input.session, targetTurnIndex);
+  const sequentialInstructions = buildSequentialQuestionInstructions(input.session, targetTurnIndex, slotKind);
+  const totalSlots = input.session.schedule?.length ?? TURN_LIMIT;
   const openAiResponse = await generateWithOpenAI(
     `
 You are an interviewer running a realistic ${input.session.role} interview at ${input.session.difficulty} difficulty.
 Behave like a real person with memory, light personality, and evolving strictness.
-Generate exactly one concise interview question for question ${targetTurnIndex + 1} of ${TURN_LIMIT}.
+Generate exactly one concise interview question for question ${targetTurnIndex + 1} of ${totalSlots}.
 
 ${sequentialInstructions}
 
@@ -767,6 +835,111 @@ Session: ${JSON.stringify(session)}
   }
 }
 
+/** Hard cap on schedule length to prevent runaway re-ask insertions. */
+export const MAX_SLOTS = 7;
+
+/**
+ * Default 5-slot interview schedule:
+ *   slot 0 = brand-new (Q1)
+ *   slot 1 = brand-new (Q2)
+ *   slot 2 = follow-up to slot 0 (Q1)
+ *   slot 3 = follow-up to slot 1 (Q2)
+ *   slot 4 = brand-new closing question
+ */
+export function buildBaseSchedule(): ScheduleSlot[] {
+  return [
+    { index: 0, kind: { kind: "new" }, question: null },
+    { index: 1, kind: { kind: "new" }, question: null },
+    { index: 2, kind: { kind: "follow-up", followsSlotIndex: 0 }, question: null },
+    { index: 3, kind: { kind: "follow-up", followsSlotIndex: 1 }, question: null },
+    { index: 4, kind: { kind: "new" }, question: null }
+  ];
+}
+
+/**
+ * Inserts a re-ask of `emptySlotIndex` at slot `emptySlotIndex + 1` and re-orders
+ * the remaining slots according to the project's empty-answer policy:
+ *
+ *   1. Remove the existing follow-up to `emptySlotIndex` (if any) — call this `displaced`.
+ *   2. Insert `{ kind: "re-ask" }` immediately after the empty slot.
+ *   3. Push every subsequent slot back by one.
+ *   4. Append `displaced` (if it existed) to the end of the schedule.
+ *   5. Re-number slot indices to match their new positions.
+ *
+ * Guarded by:
+ *   - The empty slot must not itself be a re-ask (no loops).
+ *   - `alreadyReaskedSlotIndices` must not contain `emptySlotIndex`.
+ *   - Resulting schedule must not exceed `MAX_SLOTS`.
+ *
+ * Returns the input schedule unchanged when a guard rejects the transform.
+ */
+export function transformScheduleForEmptyAnswer(
+  schedule: ScheduleSlot[],
+  emptySlotIndex: number,
+  alreadyReaskedSlotIndices: Set<number> = new Set()
+): ScheduleSlot[] {
+  if (emptySlotIndex < 0 || emptySlotIndex >= schedule.length) {
+    return schedule;
+  }
+  const emptySlot = schedule[emptySlotIndex];
+  if (emptySlot.kind.kind === "re-ask") {
+    return schedule;
+  }
+  if (alreadyReaskedSlotIndices.has(emptySlotIndex)) {
+    return schedule;
+  }
+
+  const followupIndex = schedule.findIndex(
+    (slot) => slot.kind.kind === "follow-up" && slot.kind.followsSlotIndex === emptySlotIndex
+  );
+  const willAppend = followupIndex !== -1;
+  // Net change in length: +1 for the inserted re-ask, -1 if we lift a follow-up out
+  // and re-append it (no net change), +1 if there was no follow-up to displace.
+  const projectedLength = schedule.length + (willAppend ? 0 : 1) + 1 - (willAppend ? 1 : 0);
+  // The "+1 -1" pair is the explicit insert/append accounting; simplify:
+  //   if (willAppend): length stays the same +1 for insert -1 for remove +1 for append = +1
+  //   if (!willAppend): length +1 for insert
+  // So projectedLength = schedule.length + 1 in both cases. We still cap at MAX_SLOTS.
+  if (projectedLength > MAX_SLOTS) {
+    return schedule;
+  }
+
+  const working = schedule.slice();
+  let displaced: ScheduleSlot | null = null;
+  if (willAppend) {
+    displaced = { ...working[followupIndex], question: null };
+    working.splice(followupIndex, 1);
+  }
+
+  const insertAt = working.findIndex((slot) => slot.index === emptySlotIndex) + 1;
+  working.splice(insertAt, 0, {
+    index: -1,
+    kind: { kind: "re-ask", reasksSlotIndex: emptySlotIndex },
+    question: null
+  });
+
+  if (displaced) {
+    working.push(displaced);
+  }
+
+  // Re-number `index` to match the new positions.
+  return working.map((slot, position) => ({ ...slot, index: position }));
+}
+
+/**
+ * Computes which slot indices have already had a re-ask inserted for them.
+ * Used to enforce the "1 re-ask per question" cap.
+ */
+export function getReaskedSlotIndices(schedule: ScheduleSlot[]): Set<number> {
+  const set = new Set<number>();
+  for (const slot of schedule) {
+    if (slot.kind.kind === "re-ask") {
+      set.add(slot.kind.reasksSlotIndex);
+    }
+  }
+  return set;
+}
+
 export function buildSession(
   role: JobRole,
   difficulty: InterviewSession["difficulty"],
@@ -785,6 +958,7 @@ export function buildSession(
     turns: [],
     currentQuestion: null,
     questionQueue: [],
+    schedule: buildBaseSchedule(),
     interviewComplete: false,
     currentStage: "Applied",
     hiringOutcome: null,
@@ -793,7 +967,17 @@ export function buildSession(
   };
 }
 
-export function shouldCompleteInterview(turns: InterviewTurn[]) {
+/**
+ * Interview is complete when every slot in the schedule has a corresponding turn.
+ * The schedule itself can grow (via empty-answer transforms) up to MAX_SLOTS.
+ */
+export function shouldCompleteInterview(
+  turns: InterviewTurn[],
+  schedule?: ScheduleSlot[]
+): boolean {
+  if (schedule && schedule.length > 0) {
+    return turns.length >= schedule.length;
+  }
   return turns.length >= TURN_LIMIT;
 }
 
@@ -804,7 +988,7 @@ export function applyTurnToSession(session: InterviewSession, turn: InterviewTur
   );
   const currentStage = advanceHiringStage(session.currentStage, answerStrength);
   const memory = updateMemory(session.memory, turn);
-  const interviewComplete = shouldCompleteInterview(turns);
+  const interviewComplete = shouldCompleteInterview(turns, session.schedule);
   const averageConfidence = clampScore(
     turns.reduce((sum, currentTurn) => sum + currentTurn.evaluation.liveConfidence, 0) / turns.length
   );

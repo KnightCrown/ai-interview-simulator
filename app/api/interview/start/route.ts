@@ -18,9 +18,23 @@ export async function POST(request: Request) {
   const resume = body.resumeMode === "Use Sample Resume" ? SAMPLE_RESUME : null;
   const elevenLabsVoiceId = pickRandomInterviewerVoiceId();
   const session = buildSession(role, difficulty, body.resumeMode, resume, elevenLabsVoiceId);
-  const firstQuestion = await generateQuestion({ session, targetTurnIndex: 0 });
+
+  // Generate the first two questions in parallel so the client can start
+  // playing Q1 and pre-fetch audio for Q2 immediately on session start.
+  // Both slots are kind: "new", so neither call depends on the other's result.
+  const [firstQuestion, secondQuestion] = await Promise.all([
+    generateQuestion({ session, targetTurnIndex: 0, slotKind: { kind: "new" } }),
+    generateQuestion({ session, targetTurnIndex: 1, slotKind: { kind: "new" } })
+  ]);
 
   session.currentQuestion = firstQuestion;
+  session.questionQueue = [secondQuestion];
+  if (session.schedule[0]) {
+    session.schedule[0].question = firstQuestion;
+  }
+  if (session.schedule[1]) {
+    session.schedule[1].question = secondQuestion;
+  }
 
   return NextResponse.json({ session });
 }
