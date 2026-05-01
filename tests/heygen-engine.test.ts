@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  LIVE_MAIN_QUESTION_1_SECONDS,
+  LIVE_MAIN_QUESTION_2_SECONDS,
   MAIN_QUESTION_CAP,
   MAX_FOLLOW_UPS_BEFORE_ADVANCE,
   buildOrchestratorPrompt,
@@ -44,7 +46,7 @@ afterEach(() => {
 });
 
 describe("buildOrchestratorPrompt", () => {
-  it("includes the role, difficulty, current main question, and the 3-question cap budget", () => {
+  it("includes the role, difficulty, current main question, and the main-question cap budget", () => {
     const session = freshSession();
     const prompt = buildOrchestratorPrompt({
       session,
@@ -435,6 +437,70 @@ describe("runConversationTurn", () => {
     expect(decision.classification).toBe("wrap_up");
     expect(decision.shouldEndInterview).toBe(true);
     expect(decision.replyText.toLowerCase()).toMatch(/wrap up|thanks/);
+    expect(decision.session?.turns.length).toBe(1);
+  });
+
+  it(`forces next main question when Q1 answer duration exceeds ${LIVE_MAIN_QUESTION_1_SECONDS}s`, async () => {
+    const session = freshSession();
+    const cumulative = "Partial answer before time ran out.";
+    const decision = await runConversationTurn({
+      session,
+      conversationLog: [],
+      latestUserUtterance: "",
+      mainQuestionsAsked: 1,
+      currentMainQuestion: "Walk me through a project you led.",
+      isStart: false,
+      cumulativeAnswerTranscript: cumulative,
+      durationSeconds: LIVE_MAIN_QUESTION_1_SECONDS,
+      speechMetrics: SAMPLE_SPEECH,
+      faceMetrics: SAMPLE_FACE,
+      candidateMood: SAMPLE_MOOD,
+      runLLM: async () =>
+        JSON.stringify({
+          isQuestionComplete: false,
+          classification: "follow_up",
+          transitionPhrase: "",
+          followUpText: "Tell me more?",
+          wrapUpText: ""
+        })
+    });
+
+    expect(decision.classification).toBe("next_main_question");
+    expect(decision.shouldEndInterview).toBe(false);
+    expect(decision.replyText.toLowerCase()).toContain("don't have much time");
+    expect(decision.evaluation).toBeTruthy();
+    expect(decision.session?.turns.length).toBe(1);
+  });
+
+  it(`forces wrap-up when Q2 answer duration exceeds ${LIVE_MAIN_QUESTION_2_SECONDS}s`, async () => {
+    const session = freshSession();
+    const cumulative = "Second answer cut short by timer.";
+    const decision = await runConversationTurn({
+      session,
+      conversationLog: [],
+      latestUserUtterance: "",
+      mainQuestionsAsked: 2,
+      currentMainQuestion: "Why should we hire you?",
+      isStart: false,
+      cumulativeAnswerTranscript: cumulative,
+      durationSeconds: LIVE_MAIN_QUESTION_2_SECONDS,
+      speechMetrics: SAMPLE_SPEECH,
+      faceMetrics: SAMPLE_FACE,
+      candidateMood: SAMPLE_MOOD,
+      runLLM: async () =>
+        JSON.stringify({
+          isQuestionComplete: false,
+          classification: "follow_up",
+          transitionPhrase: "",
+          followUpText: "Any more?",
+          wrapUpText: ""
+        })
+    });
+
+    expect(decision.classification).toBe("wrap_up");
+    expect(decision.shouldEndInterview).toBe(true);
+    expect(decision.replyText.toLowerCase()).toContain("out of time");
+    expect(decision.evaluation).toBeTruthy();
     expect(decision.session?.turns.length).toBe(1);
   });
 });

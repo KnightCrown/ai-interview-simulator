@@ -1,8 +1,22 @@
 import { NextResponse } from "next/server";
+import { detectLiveAvatarCreditsExhausted } from "@/lib/liveavatar-credits";
 
 const LIVEAVATAR_BASE = "https://api.liveavatar.com";
 
 type ApiEnvelope<T> = { code?: number; data?: T | null; message?: string };
+
+function jsonErrorFromLiveAvatar(bodyText: string, fallback: string): string {
+  try {
+    const parsed = JSON.parse(bodyText) as ApiEnvelope<unknown> & { error?: string };
+    const fromMsg = typeof parsed.message === "string" ? parsed.message.trim() : "";
+    if (fromMsg) return fromMsg;
+    const fromErr = typeof parsed.error === "string" ? parsed.error.trim() : "";
+    if (fromErr) return fromErr;
+  } catch {
+    /* use fallback */
+  }
+  return fallback;
+}
 
 function getApiKey(): string | undefined {
   return (
@@ -74,7 +88,15 @@ export async function POST() {
   const tokenText = await tokenRes.text();
   if (!tokenRes.ok) {
     console.error("[liveavatar token] create token failed", tokenRes.status, tokenText.slice(0, 500));
-    return NextResponse.json({ error: "LiveAvatar rejected the session token request." }, { status: 502 });
+    const creditExhausted = detectLiveAvatarCreditsExhausted(tokenRes.status, tokenText);
+    const message = jsonErrorFromLiveAvatar(tokenText, "LiveAvatar rejected the session token request.");
+    return NextResponse.json(
+      {
+        error: creditExhausted ? "Live interviewer AI credits are temporarily unavailable." : message,
+        creditExhausted
+      },
+      { status: creditExhausted ? 402 : 502 }
+    );
   }
 
   let tokenPayload: ApiEnvelope<{ session_id: string; session_token: string }>;
@@ -112,7 +134,15 @@ export async function POST() {
   const startText = await startRes.text();
   if (!startRes.ok) {
     console.error("[liveavatar token] start failed", startRes.status, startText.slice(0, 500));
-    return NextResponse.json({ error: "LiveAvatar failed to start the session." }, { status: 502 });
+    const creditExhausted = detectLiveAvatarCreditsExhausted(startRes.status, startText);
+    const message = jsonErrorFromLiveAvatar(startText, "LiveAvatar failed to start the session.");
+    return NextResponse.json(
+      {
+        error: creditExhausted ? "Live interviewer AI credits are temporarily unavailable." : message,
+        creditExhausted
+      },
+      { status: creditExhausted ? 402 : 502 }
+    );
   }
 
   let startPayload: ApiEnvelope<{

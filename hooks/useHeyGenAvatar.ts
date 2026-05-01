@@ -25,6 +25,8 @@ export interface UseHeyGenAvatarApi {
   status: HeyGenAvatarStatus;
   isSpeaking: boolean;
   error: string | null;
+  /** True when `/api/heygen/token` indicates LiveAvatar credits / quota / billing exhaustion. */
+  creditExhausted: boolean;
   start: () => Promise<void>;
   speak: (text: string) => Promise<void>;
   /**
@@ -60,6 +62,7 @@ export function useHeyGenAvatar({ videoRef, audioRef }: UseHeyGenAvatarOptions):
   const [isSpeaking, setIsSpeaking] = useState(false);
   const isSpeakingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  const [creditExhausted, setCreditExhausted] = useState(false);
   const roomRef = useRef<Room | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const startedRef = useRef(false);
@@ -71,6 +74,7 @@ export function useHeyGenAvatar({ videoRef, audioRef }: UseHeyGenAvatarOptions):
     roomRef.current = null;
     sessionIdRef.current = null;
     startedRef.current = false;
+    setCreditExhausted(false);
     if (room) {
       try {
         await room.disconnect();
@@ -120,17 +124,34 @@ export function useHeyGenAvatar({ videoRef, audioRef }: UseHeyGenAvatarOptions):
     startedRef.current = true;
     setStatus("connecting");
     setError(null);
+    setCreditExhausted(false);
     logLiveAvatarEvent("start_requested", {}, "avatar-hook");
 
     let bootstrap: BootstrapResponse;
+    let tokenFailureWasCredits = false;
     try {
       logLiveAvatarEvent("token_request_sent", {}, "avatar-hook");
       const res = await fetch("/api/heygen/token", { method: "POST" });
-      if (!res.ok) {
-        const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(errBody.error || `Session bootstrap failed (${res.status})`);
+      const responseText = await res.text();
+      type TokenJson = Partial<BootstrapResponse> & { error?: string; creditExhausted?: boolean };
+      let payload: TokenJson = {};
+      try {
+        payload = JSON.parse(responseText) as TokenJson;
+      } catch {
+        /* leave payload empty */
       }
-      const data = (await res.json()) as Partial<BootstrapResponse>;
+
+      const creditsHit = res.status === 402 || payload.creditExhausted === true;
+
+      if (!res.ok) {
+        if (creditsHit) {
+          tokenFailureWasCredits = true;
+          setCreditExhausted(true);
+        }
+        throw new Error(payload.error || responseText.slice(0, 180) || `Session bootstrap failed (${res.status})`);
+      }
+
+      const data = payload;
       if (!data.livekitUrl || !data.livekitToken || !data.sessionId) {
         throw new Error("Missing LiveKit or session fields from server.");
       }
@@ -143,9 +164,11 @@ export function useHeyGenAvatar({ videoRef, audioRef }: UseHeyGenAvatarOptions):
     } catch (err) {
       startedRef.current = false;
       setStatus("error");
-      setError(err instanceof Error ? err.message : "Failed to start live avatar session.");
+      const msg = err instanceof Error ? err.message : "Failed to start live avatar session.";
+      setError(msg);
       logLiveAvatarEvent("start_failed", {
-        error: err instanceof Error ? err.message : "Failed to start live avatar session."
+        error: msg,
+        creditExhausted: tokenFailureWasCredits
       }, "avatar-hook");
       return;
     }
@@ -355,5 +378,5 @@ export function useHeyGenAvatar({ videoRef, audioRef }: UseHeyGenAvatarOptions):
     };
   }, [stop]);
 
-  return { status, isSpeaking, error, start, speak, waitForSpeakComplete, interrupt, stop };
+  return { status, isSpeaking, error, creditExhausted, start, speak, waitForSpeakComplete, interrupt, stop };
 }

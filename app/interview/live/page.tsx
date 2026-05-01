@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { flushSync } from "react-dom";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal, flushSync } from "react-dom";
 import { FeedbackPanel, type CoachingThought } from "@/components/feedback-panel";
 import { TechSpecsButton } from "@/components/tech-specs-button";
 import { ThemeToggle } from "@/components/theme-toggle";
@@ -22,6 +22,7 @@ import { liveConfidenceFromSignals } from "@/lib/interview-scoring";
 import { logLiveAvatarEvent } from "@/lib/live-avatar-client-log";
 import { formatLiveConversationForFinalize } from "@/lib/live-interview-finalize";
 import { getUnsubmittedUtteranceDelta } from "@/lib/live-avatar-turn";
+import { isTranscriptSubstantive } from "@/lib/transcript-utils";
 import { createEmptyMoodCounts, getDominantMoodFromCounts } from "@/lib/candidate-mood";
 import { useFaceTracking } from "@/hooks/useFaceTracking";
 import { useHeyGenAvatar } from "@/hooks/useHeyGenAvatar";
@@ -29,6 +30,7 @@ import { useSpeechRecognition } from "@/hooks/useSpeechRecognition";
 import { useSmoothedLiveMetric } from "@/hooks/useSmoothedLiveMetric";
 import { useInterviewSession } from "@/lib/session-store";
 import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/media-device-preferences";
+import { getLiveAnswerSecondsBudget } from "@/lib/heygen-engine";
 
 /**
  * Silence for this many ms after the caption last changed is
@@ -36,6 +38,8 @@ import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/me
  * the cumulative transcript to the orchestrator.
  */
 const END_OF_UTTERANCE_DEBOUNCE_MS = 2000;
+/** Extra delay before end-of-utterance can fire while the candidate has not yet spoken after the interviewer finishes asking. */
+const POST_QUESTION_LISTENING_GRACE_MS = 4000;
 const CANDIDATE_MOOD_SAMPLE_MS = 2000;
 
 type MainVideo = "interviewer" | "candidate";
@@ -124,7 +128,7 @@ export default function LiveInterviewPage() {
     () => loadMediaDevicePreferences()?.audioInputId ?? ""
   );
   const [error, setError] = useState<string | null>(null);
-  const [statusLabel, setStatusLabel] = useState("Tap Begin to start");
+  const [statusLabel, setStatusLabel] = useState("");
 
   const [mainQuestionsAsked, setMainQuestionsAsked] = useState(0);
   const [currentMainQuestion, setCurrentMainQuestion] = useState<string | null>(null);
@@ -136,6 +140,7 @@ export default function LiveInterviewPage() {
   const isSubmittingRef = useRef(false);
   const lastSubmittedTranscriptRef = useRef("");
   const debounceTimerRef = useRef<number | null>(null);
+  const questionAnswerTimerRef = useRef<number | null>(null);
   const answerStartTimeRef = useRef<number>(0);
   const answerEmotionAccumRef = useRef(createEmptyEmotionAccum());
   const latestCandidateEmotionRef = useRef(face.metrics.emotion);
@@ -147,9 +152,10 @@ export default function LiveInterviewPage() {
   const openMicAfterAvatarStopsRef = useRef(false);
   /** Previous `avatar.isSpeaking` — used to detect speak end without racing applyDecision. */
   const prevAvatarSpeakingRef = useRef(false);
-  /** When true, do not auto-open the mic after the avatar finishes (user chose Pause listening). */
-  const micPausedByUserRef = useRef(false);
-  const [micPausedByUser, setMicPausedByUser] = useState(false);
+  /** While waiting for the candidate's first substantive speech after the mic opens, silence debounce includes this grace window. */
+  const postQuestionListenGraceUntilRef = useRef(0);
+  const candidateAnswerStartedThisPeriodRef = useRef(false);
+  const armQuestionAnswerDeadlineRef = useRef<() => void>(() => {});
 
   const [displayedCandidateMood, setDisplayedCandidateMood] = useState<FaceEmotionDominant>(face.metrics.emotion.dominant);
 
@@ -187,6 +193,15 @@ export default function LiveInterviewPage() {
   useEffect(() => {
     phaseRef.current = phase;
   }, [phase]);
+
+  useEffect(() => {
+    return () => {
+      if (questionAnswerTimerRef.current !== null) {
+        window.clearTimeout(questionAnswerTimerRef.current);
+        questionAnswerTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     conversationLogRef.current = conversationLog;
@@ -248,6 +263,18 @@ export default function LiveInterviewPage() {
       isListening: speech.isListening
     }, "live-page");
   }, [speech.isListening, speechIsSupported]);
+
+  useEffect(() => {
+    if (!session) return;
+    if (!speechIsSupported) {
+      setStatusLabel("Speech recognition unavailable — use Chrome, Edge, or Safari");
+    }
+  }, [session, speechIsSupported]);
+
+  const [portalMounted, setPortalMounted] = useState(false);
+  useEffect(() => {
+    setPortalMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!currentTranscript) return;
@@ -379,6 +406,44 @@ export default function LiveInterviewPage() {
   }, [setSession]);
 
   /**
+   * After the live credits modal is dismissed: complete with no substantive answers so
+   * `/api/interview/finalize` returns the same empty-session fallback report as a session
+   * where no questions were answered.
+   */
+  const finalizeCreditsExhaustedAndGoToSummary = useCallback(() => {
+    if (questionAnswerTimerRef.current !== null) {
+      window.clearTimeout(questionAnswerTimerRef.current);
+      questionAnswerTimerRef.current = null;
+    }
+    const base = sessionRef.current;
+    if (!base) {
+      router.replace("/");
+      return;
+    }
+    flushSync(() => {
+      setSession({
+        ...base,
+        turns: [],
+        interviewComplete: true,
+        liveConversationTranscript: ""
+      });
+    });
+    logLiveAvatarEvent("session_prepared_for_results", { transcriptChars: 0, reason: "credits_exhausted" }, "live-page");
+    void avatar.stop().catch(() => {});
+    stopListening();
+    router.push("/results");
+  }, [avatar, router, setSession, stopListening]);
+
+  useEffect(() => {
+    if (!avatar.creditExhausted) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") finalizeCreditsExhaustedAndGoToSummary();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [avatar.creditExhausted, finalizeCreditsExhaustedAndGoToSummary]);
+
+  /**
    * Apply a decision the orchestrator returned: speak the avatar's reply, fold
    * scoring/turn updates into the session, manage state transitions, and route
    * to /results when the interview is over.
@@ -486,11 +551,12 @@ export default function LiveInterviewPage() {
       window.setTimeout(() => {
         if (phaseRef.current !== "running") return;
         if (!openMicAfterAvatarStopsRef.current) return;
-        if (micPausedByUserRef.current) return;
         openMicAfterAvatarStopsRef.current = false;
         prevAvatarSpeakingRef.current = false;
         lastSubmittedTranscriptRef.current = "";
         resetTranscript();
+        postQuestionListenGraceUntilRef.current = Date.now() + POST_QUESTION_LISTENING_GRACE_MS;
+        candidateAnswerStartedThisPeriodRef.current = false;
         setCaptureEnabled(true);
         logLiveAvatarEvent("avatar_speak_event_missing_opening_mic_fallback", {
           fallbackMs
@@ -501,6 +567,7 @@ export default function LiveInterviewPage() {
         }
         answerStartTimeRef.current = Date.now();
         setStatusLabel("Listening...");
+        armQuestionAnswerDeadlineRef.current();
       }, fallbackMs);
     },
     [
@@ -528,6 +595,11 @@ export default function LiveInterviewPage() {
       requireSubstantive: true
     });
     if (!delta) return;
+
+    if (questionAnswerTimerRef.current !== null) {
+      window.clearTimeout(questionAnswerTimerRef.current);
+      questionAnswerTimerRef.current = null;
+    }
 
     isSubmittingRef.current = true;
     lastSubmittedTranscriptRef.current = candidateText;
@@ -568,32 +640,68 @@ export default function LiveInterviewPage() {
   const performUtteranceSubmissionRef = useRef(performUtteranceSubmission);
   performUtteranceSubmissionRef.current = performUtteranceSubmission;
 
-  const handlePauseListening = useCallback(() => {
+  const performTimeExpiredSubmission = useCallback(async () => {
+    if (phaseRef.current !== "running" || speakingRef.current) return;
+    if (isSubmittingRef.current) return;
+
+    const budget = getLiveAnswerSecondsBudget(mainQuestionsAskedRef.current);
+    if (budget === null) return;
+
+    const elapsedSec = Math.max(
+      0,
+      Math.round((Date.now() - (answerStartTimeRef.current || Date.now())) / 1000)
+    );
+    if (elapsedSec < budget) return;
+
     if (debounceTimerRef.current !== null) {
       window.clearTimeout(debounceTimerRef.current);
       debounceTimerRef.current = null;
     }
-    micPausedByUserRef.current = true;
-    setMicPausedByUser(true);
-    setCaptureEnabled(false);
-    stopListening();
-    setStatusLabel("Mic paused — tap Resume listening when ready");
-    logLiveAvatarEvent("manual_stop_listening", {}, "live-page");
-  }, [setCaptureEnabled, stopListening]);
 
-  const handleResumeListening = useCallback(() => {
-    if (phaseRef.current !== "running" || speakingRef.current) return;
-    micPausedByUserRef.current = false;
-    setMicPausedByUser(false);
-    setCaptureEnabled(true);
-    if (speechIsSupported) {
-      startListening({ reset: false });
-      logLiveAvatarEvent("speech_listening_start_requested", { reason: "manual_resume" }, "live-page");
+    isSubmittingRef.current = true;
+    setStatusLabel("We're out of time — moving on...");
+    logLiveAvatarEvent("utterance_sent_to_orchestrator", {
+      textLength: 0,
+      textPreview: "",
+      fullCaptionLength: 0,
+      trigger: "time_limit",
+      durationSeconds: elapsedSec,
+      mainQuestionsAsked: mainQuestionsAskedRef.current
+    }, "live-page");
+
+    try {
+      const decision = await sendOrchestratorRequestRef.current({ isStart: false, latestUserUtterance: "" });
+      if (decision) {
+        await applyDecisionRef.current(decision);
+      }
+    } catch (err) {
+      console.error("[live] time-limit orchestrator failed", err);
+      setError("Lost connection to the interviewer. Please reload to try again.");
+      logLiveAvatarEvent("orchestrator_round_trip_failed", {
+        error: err instanceof Error ? err.message : "time-limit orchestrator failed"
+      }, "live-page");
+    } finally {
+      isSubmittingRef.current = false;
+      logLiveAvatarEvent("utterance_submission_complete", { trigger: "time_limit" }, "live-page");
     }
-    answerStartTimeRef.current = Date.now();
-    setStatusLabel("Listening...");
-    logLiveAvatarEvent("manual_resume_listening", {}, "live-page");
-  }, [setCaptureEnabled, speechIsSupported, startListening]);
+  }, []);
+
+  const performTimeExpiredSubmissionRef = useRef(performTimeExpiredSubmission);
+  performTimeExpiredSubmissionRef.current = performTimeExpiredSubmission;
+
+  armQuestionAnswerDeadlineRef.current = () => {
+    if (questionAnswerTimerRef.current !== null) {
+      window.clearTimeout(questionAnswerTimerRef.current);
+      questionAnswerTimerRef.current = null;
+    }
+    const mq = mainQuestionsAskedRef.current;
+    const budget = getLiveAnswerSecondsBudget(mq);
+    if (budget === null) return;
+    questionAnswerTimerRef.current = window.setTimeout(() => {
+      questionAnswerTimerRef.current = null;
+      void performTimeExpiredSubmissionRef.current();
+    }, budget * 1000);
+  };
 
   // Re-open the mic only when the avatar *finishes* speaking (isSpeaking goes
   // true → false). Opening whenever isSpeaking was false races applyDecision:
@@ -606,6 +714,10 @@ export default function LiveInterviewPage() {
     }
 
     if (avatar.isSpeaking) {
+      if (questionAnswerTimerRef.current !== null) {
+        window.clearTimeout(questionAnswerTimerRef.current);
+        questionAnswerTimerRef.current = null;
+      }
       setCaptureEnabled(false);
       logLiveAvatarEvent("mic_capture_disabled", { reason: "avatar_is_speaking" }, "live-page");
       prevAvatarSpeakingRef.current = true;
@@ -618,13 +730,9 @@ export default function LiveInterviewPage() {
     if (avatarJustFinished && openMicAfterAvatarStopsRef.current) {
       openMicAfterAvatarStopsRef.current = false;
       lastSubmittedTranscriptRef.current = "";
-      if (micPausedByUserRef.current) {
-        setCaptureEnabled(false);
-        setStatusLabel("Mic paused — tap Resume listening when ready");
-        logLiveAvatarEvent("mic_left_closed", { reason: "user_paused" }, "live-page");
-        return;
-      }
       resetTranscript();
+      postQuestionListenGraceUntilRef.current = Date.now() + POST_QUESTION_LISTENING_GRACE_MS;
+      candidateAnswerStartedThisPeriodRef.current = false;
       setCaptureEnabled(true);
       logLiveAvatarEvent("mic_capture_enabled", { reason: "avatar_finished" }, "live-page");
       if (!speech.isListening && speechIsSupported) {
@@ -633,6 +741,7 @@ export default function LiveInterviewPage() {
       }
       answerStartTimeRef.current = Date.now();
       setStatusLabel("Listening...");
+      armQuestionAnswerDeadlineRef.current();
     }
   }, [avatar.isSpeaking, phase, resetTranscript, setCaptureEnabled, speech.isListening, speechIsSupported, startListening]);
 
@@ -644,6 +753,9 @@ export default function LiveInterviewPage() {
     if (avatar.isSpeaking) return;
 
     const fullCaption = `${transcript} ${interimTranscript}`.trim();
+    if (isTranscriptSubstantive(fullCaption)) {
+      candidateAnswerStartedThisPeriodRef.current = true;
+    }
     const pendingDelta = getUnsubmittedUtteranceDelta(fullCaption, lastSubmittedTranscriptRef.current);
     if (!pendingDelta || isSubmittingRef.current) return;
 
@@ -651,9 +763,15 @@ export default function LiveInterviewPage() {
       window.clearTimeout(debounceTimerRef.current);
     }
 
+    const graceRemainingMs = candidateAnswerStartedThisPeriodRef.current
+      ? 0
+      : Math.max(0, postQuestionListenGraceUntilRef.current - Date.now());
+    const debounceMs = END_OF_UTTERANCE_DEBOUNCE_MS + graceRemainingMs;
+
     // Any new transcript or interim update re-runs this effect and re-arms the timer.
     logLiveAvatarEvent("utterance_debounce_armed", {
-      debounceMs: END_OF_UTTERANCE_DEBOUNCE_MS,
+      debounceMs,
+      graceRemainingMs,
       deltaLength: pendingDelta.length,
       deltaPreview: pendingDelta.slice(0, 120),
       hasInterim: !!interimTranscript.trim()
@@ -661,7 +779,7 @@ export default function LiveInterviewPage() {
     debounceTimerRef.current = window.setTimeout(() => {
       debounceTimerRef.current = null;
       void performUtteranceSubmissionRef.current();
-    }, END_OF_UTTERANCE_DEBOUNCE_MS);
+    }, debounceMs);
 
     return () => {
       if (debounceTimerRef.current !== null) {
@@ -671,39 +789,62 @@ export default function LiveInterviewPage() {
     };
   }, [avatar.isSpeaking, interimTranscript, phase, transcript]);
 
-  /**
-   * Begin button handler. Triggers the user gesture browsers require to
-   * autoplay the LiveKit video, then starts the avatar and asks the first
-   * main question.
-   */
-  const handleBegin = useCallback(async () => {
+  const liveAutoStartRef = useRef(false);
+  /** True until the avatar first reaches ready/speaking after auto-start (hook often sets error without throwing). */
+  const awaitingInitialAvatarReadyRef = useRef(false);
+
+  // Auto-connect as soon as the room loads (session present + speech OK). useLayoutEffect
+  // keeps the pre-connected “Begin” flash off the first paint when prerequisites are met.
+  useLayoutEffect(() => {
     if (!session) return;
-    logLiveAvatarEvent("begin_clicked", {
-      role: session.role,
-      difficulty: session.difficulty,
-      speechIsSupported
-    }, "live-page");
+    if (!speechIsSupported) return;
+    if (liveAutoStartRef.current) return;
+    liveAutoStartRef.current = true;
+    awaitingInitialAvatarReadyRef.current = true;
+
     setError(null);
-    micPausedByUserRef.current = false;
-    setMicPausedByUser(false);
     setPhase("running");
     setStatusLabel("Connecting to interviewer...");
+    logLiveAvatarEvent("live_auto_start", { role: session.role, difficulty: session.difficulty }, "live-page");
 
-    try {
-      logLiveAvatarEvent("avatar_start_requested", {}, "live-page");
-      await avatar.start();
-      logLiveAvatarEvent("avatar_start_completed", { status: avatar.status }, "live-page");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to start avatar.");
-      setPhase("setup");
-      logLiveAvatarEvent("avatar_start_failed", {
-        error: err instanceof Error ? err.message : "Failed to start avatar."
-      }, "live-page");
+    void (async () => {
+      try {
+        logLiveAvatarEvent("avatar_start_requested", { trigger: "auto" }, "live-page");
+        await avatar.start();
+        logLiveAvatarEvent("avatar_start_completed", { status: avatar.status }, "live-page");
+      } catch (err) {
+        awaitingInitialAvatarReadyRef.current = false;
+        liveAutoStartRef.current = false;
+        setError(err instanceof Error ? err.message : "Failed to start avatar.");
+        setPhase("setup");
+        setStatusLabel("Could not connect");
+        logLiveAvatarEvent("avatar_start_failed", {
+          error: err instanceof Error ? err.message : "Failed to start avatar."
+        }, "live-page");
+      }
+    })();
+  }, [avatar.start, session, speechIsSupported]);
+
+  useEffect(() => {
+    if (!awaitingInitialAvatarReadyRef.current) return;
+    if (avatar.status === "ready" || avatar.status === "speaking") {
+      awaitingInitialAvatarReadyRef.current = false;
       return;
     }
-  }, [avatar, session, speechIsSupported]);
+    if (avatar.status === "error") {
+      awaitingInitialAvatarReadyRef.current = false;
+      liveAutoStartRef.current = false;
+      setError((current) => current ?? avatar.error ?? "Could not connect to the interviewer.");
+      setPhase("setup");
+      setStatusLabel("Could not connect");
+      logLiveAvatarEvent("avatar_initial_connect_failed", {
+        status: avatar.status,
+        message: avatar.error
+      }, "live-page");
+    }
+  }, [avatar.error, avatar.status]);
 
-  // Once the avatar stream is ready (post-handleBegin), kick off the greeting +
+  // Once the avatar stream is ready (post-connect), kick off the greeting +
   // first main question via the orchestrator.
   const greetingFiredRef = useRef(false);
   useEffect(() => {
@@ -734,7 +875,7 @@ export default function LiveInterviewPage() {
 
   if (!session) return null;
 
-  const totalQuestions = 3;
+  const totalQuestions = 2;
   const currentQuestionNumber = Math.min(Math.max(1, mainQuestionsAsked), totalQuestions);
 
   return (
@@ -1014,23 +1155,28 @@ export default function LiveInterviewPage() {
             ) : null}
 
             {phase === "setup" ? (
-              <div className="absolute inset-0 z-30 grid place-items-center bg-slate-950/80 px-8 text-center">
+              <div className="absolute inset-0 z-30 grid place-items-center bg-slate-950/85 px-8 text-center">
                 <div className="max-w-md space-y-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-300">Live HeyGen avatar (Beta)</p>
-                  <h2 className="text-2xl font-semibold text-white">Ready when you are.</h2>
-                  <p className="text-sm leading-6 text-slate-300">
-                    A live AI interviewer will greet you, ask up to 3 main questions with free-flow follow-ups, and react to what you say in real time. You can interrupt the avatar mid-sentence — speaking will stop it.
-                  </p>
+                  <h2 className="text-2xl font-semibold text-white">Can&apos;t start this session</h2>
                   {error ? <p className="rounded-xl bg-rose-900/40 px-4 py-3 text-sm text-rose-100">{error}</p> : null}
-                  {!speechIsSupported ? <p className="rounded-xl bg-amber-900/40 px-4 py-3 text-sm text-amber-100">Speech recognition is not supported in this browser. Use Chrome, Edge, or Safari.</p> : null}
-                  <button
-                    type="button"
-                    onClick={handleBegin}
-                    disabled={!speechIsSupported}
-                    className="w-full rounded-2xl bg-teal-500 px-6 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-teal-400 disabled:cursor-not-allowed disabled:bg-slate-600"
-                  >
-                    Begin live interview
-                  </button>
+                  {!speechIsSupported ? (
+                    <p className="rounded-xl bg-amber-900/40 px-4 py-3 text-sm text-amber-100">
+                      Speech recognition is not supported in this browser. Use Chrome, Edge, or Safari.
+                    </p>
+                  ) : null}
+                  <p className="text-sm leading-6 text-slate-300">
+                    Reload the page to try again, or go back and start a new interview from the home screen.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            {phase === "running" && (avatar.status === "idle" || avatar.status === "connecting") ? (
+              <div className="absolute inset-0 z-[28] grid place-items-center bg-slate-950/75 px-8 text-center backdrop-blur-[2px]">
+                <div className="space-y-2">
+                  <p className="text-lg font-semibold text-white sm:text-xl">Connecting to interviewer…</p>
+                  <p className="text-sm text-slate-400">This may take a few seconds.</p>
                 </div>
               </div>
             ) : null}
@@ -1073,33 +1219,13 @@ export default function LiveInterviewPage() {
                   {mainVideo === "interviewer" ? "Interviewing" : "Candidate camera"}
                 </div>
               ) : null}
-              {phase === "running" && !avatar.isSpeaking ? (
-                micPausedByUser ? (
-                  <button
-                    type="button"
-                    onClick={handleResumeListening}
-                    disabled={!speechIsSupported}
-                    className="rounded-xl bg-teal-600 px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:bg-teal-500 disabled:cursor-not-allowed disabled:bg-slate-600"
-                  >
-                    Resume listening
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={handlePauseListening}
-                    className="rounded-xl bg-black/55 px-4 py-2 text-sm font-semibold text-white backdrop-blur transition hover:bg-black/70"
-                  >
-                    Pause listening
-                  </button>
-                )
-              ) : null}
             </div>
           </div>
 
           <div className="order-2 mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-panel sm:px-8 sm:py-6 lg:col-start-2 lg:row-start-2 dark:border-slate-700 dark:bg-slate-900">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Live conversation</p>
             <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
-              After you stop speaking, silence of more than two seconds sends your response to the interviewer (unless listening is paused).
+              After 2 seconds of silence, your response is submitted to the interviewer.
             </p>
             <div className="mt-3 max-h-72 space-y-3 overflow-y-auto pr-1">
               {conversationLog.length === 0 ? (
@@ -1147,6 +1273,47 @@ export default function LiveInterviewPage() {
           ) : null}
         </aside>
       </div>
+
+      {portalMounted && avatar.creditExhausted
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[10000] grid place-items-center bg-ink/45 px-4 py-8 backdrop-blur-sm dark:bg-black/65"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="live-credits-modal-title"
+              onMouseDown={(event) => {
+                if (event.target === event.currentTarget) finalizeCreditsExhaustedAndGoToSummary();
+              }}
+            >
+              <div className="relative w-full max-w-xl rounded-3xl border border-slate-200 bg-white p-8 shadow-panel dark:border-slate-700 dark:bg-slate-900">
+                <button
+                  type="button"
+                  onClick={() => finalizeCreditsExhaustedAndGoToSummary()}
+                  className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+                  aria-label="Close and continue to summary"
+                >
+                  x
+                </button>
+                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-700 dark:text-teal-300">Live interviewer</p>
+                <h2 id="live-credits-modal-title" className="mt-3 text-4xl font-bold tracking-tight text-ink dark:text-white sm:text-5xl">
+                  Oh no
+                </h2>
+                <p className="mt-5 text-sm leading-7 text-slate-700 dark:text-slate-300">
+                  It seems this project has gotten much more popular than I anticipated and has run out of live interviewer AI credits.
+                  Please be patient whilst I update the credits for the live AI interviewer.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => finalizeCreditsExhaustedAndGoToSummary()}
+                  className="mt-8 w-full rounded-2xl bg-ink px-6 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-slate-800 dark:bg-teal-600 dark:hover:bg-teal-500"
+                >
+                  Continue to summary
+                </button>
+              </div>
+            </div>,
+            document.body
+          )
+        : null}
     </main>
   );
 }

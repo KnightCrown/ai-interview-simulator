@@ -21,12 +21,31 @@ import { isTranscriptSubstantive } from "@/lib/transcript-utils";
 
 /**
  * Soft cap on the number of MAIN questions the live avatar will ask before
- * wrapping up and routing to /results. The user picked 3 in the planning step.
+ * wrapping up and routing to /results.
  *
  * Greeting and follow-up utterances do NOT count toward this cap. Only utterances
  * the orchestrator classifies as `next_main_question` increment the counter.
  */
-export const MAIN_QUESTION_CAP = 3;
+export const MAIN_QUESTION_CAP = 2;
+
+/**
+ * Wall-clock answer budget for main question 1 (60s target + 10s buffer).
+ * Enforced in `runConversationTurn` using `durationSeconds` from the client.
+ */
+export const LIVE_MAIN_QUESTION_1_SECONDS = 70;
+
+/**
+ * Wall-clock answer budget for main question 2 (50s target + 10s buffer).
+ * When this expires, the interview wraps up.
+ */
+export const LIVE_MAIN_QUESTION_2_SECONDS = 60;
+
+/** Active timed windows: while answering Q1 (`mainQuestionsAsked === 1`) or Q2 (`=== 2`). */
+export function getLiveAnswerSecondsBudget(mainQuestionsAsked: number): number | null {
+  if (mainQuestionsAsked === 1) return LIVE_MAIN_QUESTION_1_SECONDS;
+  if (mainQuestionsAsked === 2) return LIVE_MAIN_QUESTION_2_SECONDS;
+  return null;
+}
 
 /**
  * After this many interviewer follow-up utterances on the same main question,
@@ -401,6 +420,81 @@ export async function scoreCompletedMainQuestion(input: {
   return { session: nextSession, evaluation, turn };
 }
 
+type LiveTimingInput = {
+  session: InterviewSession;
+  conversationLog: ConversationLogEntry[];
+  latestUserUtterance: string;
+  mainQuestionsAsked: number;
+  currentMainQuestion: string | null;
+  cumulativeAnswerTranscript: string;
+  durationSeconds: number;
+  speechMetrics: SpeechMetrics;
+  faceMetrics: FaceMetrics;
+  candidateMood: CandidateMoodSnapshot | null;
+};
+
+/**
+ * When the client-reported answer duration exceeds the per-question budget,
+ * skip the LLM and force the next step (Q2 or wrap-up). Keeps live interviews
+ * within ~2 minutes plus buffers.
+ */
+async function resolveTimedOutMainQuestion(input: LiveTimingInput): Promise<ConversationDecision | null> {
+  const budget = getLiveAnswerSecondsBudget(input.mainQuestionsAsked);
+  if (budget === null) return null;
+  if (input.durationSeconds < budget) return null;
+
+  if (input.mainQuestionsAsked === 1) {
+    const { session: scoredSession, evaluation } = await scoreCompletedMainQuestion({
+      session: input.session,
+      question: input.currentMainQuestion ?? "",
+      transcript: input.cumulativeAnswerTranscript,
+      durationSeconds: input.durationSeconds,
+      speechMetrics: input.speechMetrics,
+      faceMetrics: input.faceMetrics,
+      candidateMood: input.candidateMood
+    });
+    const nextTargetIndex = scoredSession.turns.length;
+    const nextQuestion = await generateQuestion({
+      session: scoredSession,
+      targetTurnIndex: nextTargetIndex,
+      slotKind: { kind: "new" }
+    });
+    const transition = "We don't have much time — let's move on to your next question.";
+    return {
+      replyText: `${transition} ${nextQuestion}`.trim(),
+      classification: "next_main_question",
+      isQuestionComplete: true,
+      evaluation,
+      session: scoredSession,
+      shouldEndInterview: false
+    };
+  }
+
+  if (input.mainQuestionsAsked === 2) {
+    const { session: scoredSession, evaluation } = await scoreCompletedMainQuestion({
+      session: input.session,
+      question: input.currentMainQuestion ?? "",
+      transcript: input.cumulativeAnswerTranscript,
+      durationSeconds: input.durationSeconds,
+      speechMetrics: input.speechMetrics,
+      faceMetrics: input.faceMetrics,
+      candidateMood: input.candidateMood
+    });
+    const transition = "We're out of time — I need to wrap up here.";
+    const wrapUp = "Thanks for joining me today — we'll review everything and follow up with feedback shortly.";
+    return {
+      replyText: `${transition} ${wrapUp}`.trim(),
+      classification: "wrap_up",
+      isQuestionComplete: true,
+      evaluation,
+      session: scoredSession,
+      shouldEndInterview: true
+    };
+  }
+
+  return null;
+}
+
 /**
  * High-level orchestrator entry point used by /api/heygen/conversation. Returns
  * the avatar's next utterance + (when the main question is complete) the
@@ -437,6 +531,20 @@ export async function runConversationTurn(input: {
       shouldEndInterview: false
     };
   }
+
+  const timedOut = await resolveTimedOutMainQuestion({
+    session: input.session,
+    conversationLog: input.conversationLog,
+    latestUserUtterance: input.latestUserUtterance,
+    mainQuestionsAsked: input.mainQuestionsAsked,
+    currentMainQuestion: input.currentMainQuestion,
+    cumulativeAnswerTranscript: input.cumulativeAnswerTranscript,
+    durationSeconds: input.durationSeconds,
+    speechMetrics: input.speechMetrics,
+    faceMetrics: input.faceMetrics,
+    candidateMood: input.candidateMood
+  });
+  if (timedOut) return timedOut;
 
   let decision = await decideNextUtterance(
     {

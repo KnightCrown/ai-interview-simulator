@@ -26,7 +26,7 @@ const FALLBACK_SPEECH_METRICS = {
  * - `isQuestionComplete`   true when a MAIN question was just completed (and scored)
  * - `evaluation`           AnswerEvaluation when isQuestionComplete (drives coaching panel)
  * - `session`              updated InterviewSession when isQuestionComplete
- * - `shouldEndInterview`   true after MAIN_QUESTION_CAP main questions; client routes to /results
+ * - `shouldEndInterview`   true after MAIN_QUESTION_CAP (2) timed live questions; client routes to /results
  */
 export async function POST(request: Request) {
   let body: Partial<ConversationRequest>;
