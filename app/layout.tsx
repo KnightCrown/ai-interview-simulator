@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { Analytics } from "@vercel/analytics/next";
 import "./globals.css";
 import { SessionProvider } from "@/components/session-provider";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
@@ -35,6 +36,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       </head>
       <body>
         <SessionProvider>{children}</SessionProvider>
+        <Analytics />
       </body>
     </html>
   );
