@@ -27,6 +27,11 @@ export interface UseHeyGenAvatarApi {
   error: string | null;
   start: () => Promise<void>;
   speak: (text: string) => Promise<void>;
+  /**
+   * After calling `speak`, waits until avatar audio finishes (`isSpeaking` false) or `overallMaxMs`.
+   * Use after wrap-up so routing does not cut off the goodbye mid-sentence.
+   */
+  waitForSpeakComplete: (overallMaxMs: number) => Promise<void>;
   interrupt: () => Promise<void>;
   stop: () => Promise<void>;
 }
@@ -53,6 +58,7 @@ function newEventId(): string {
 export function useHeyGenAvatar({ videoRef, audioRef }: UseHeyGenAvatarOptions): UseHeyGenAvatarApi {
   const [status, setStatus] = useState<HeyGenAvatarStatus>("idle");
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const isSpeakingRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const roomRef = useRef<Room | null>(null);
   const sessionIdRef = useRef<string | null>(null);
@@ -266,6 +272,21 @@ export function useHeyGenAvatar({ videoRef, audioRef }: UseHeyGenAvatarOptions):
     }
   }, [audioRef, videoRef]);
 
+  useEffect(() => {
+    isSpeakingRef.current = isSpeaking;
+  }, [isSpeaking]);
+
+  const waitForSpeakComplete = useCallback(async (overallMaxMs: number) => {
+    const deadline = Date.now() + overallMaxMs;
+    const speakStartCutoff = Math.min(Date.now() + 8000, deadline);
+    while (!isSpeakingRef.current && Date.now() < speakStartCutoff) {
+      await new Promise((r) => window.setTimeout(r, 100));
+    }
+    while (isSpeakingRef.current && Date.now() < deadline) {
+      await new Promise((r) => window.setTimeout(r, 120));
+    }
+  }, []);
+
   const publishControl = useCallback(async (body: Record<string, unknown>) => {
     const room = roomRef.current;
     const sessionId = sessionIdRef.current;
@@ -334,5 +355,5 @@ export function useHeyGenAvatar({ videoRef, audioRef }: UseHeyGenAvatarOptions):
     };
   }, [stop]);
 
-  return { status, isSpeaking, error, start, speak, interrupt, stop };
+  return { status, isSpeaking, error, start, speak, waitForSpeakComplete, interrupt, stop };
 }

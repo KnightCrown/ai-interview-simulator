@@ -1,5 +1,4 @@
 import { NextResponse } from "next/server";
-import { formatLiveAvatarLogLine, normalizeLiveAvatarLog } from "@/lib/live-avatar-debug";
 
 const LIVEAVATAR_BASE = "https://api.liveavatar.com";
 
@@ -21,15 +20,6 @@ function getAvatarId(): string | undefined {
   );
 }
 
-function logTokenEvent(event: string, details: Record<string, unknown> = {}) {
-  console.log(formatLiveAvatarLogLine(normalizeLiveAvatarLog({
-    event,
-    source: "server-token",
-    pathname: "/api/heygen/token",
-    details
-  })));
-}
-
 /**
  * Bootstraps a LiveAvatar FULL session: create session token → start session.
  * Returns LiveKit connection details for the browser (see hooks/useHeyGenAvatar).
@@ -38,10 +28,8 @@ function logTokenEvent(event: string, details: Record<string, unknown> = {}) {
  * @see https://docs.liveavatar.com/docs/faq/migration-guide
  */
 export async function POST() {
-  logTokenEvent("bootstrap_requested");
   const apiKey = getApiKey();
   if (!apiKey) {
-    logTokenEvent("missing_api_key");
     return NextResponse.json(
       {
         error:
@@ -53,7 +41,6 @@ export async function POST() {
 
   const avatarId = getAvatarId();
   if (!avatarId) {
-    logTokenEvent("missing_avatar_id");
     return NextResponse.json(
       {
         error:
@@ -65,7 +52,6 @@ export async function POST() {
 
   let tokenRes: Response;
   try {
-    logTokenEvent("liveavatar_token_request_sending", { hasAvatarId: !!avatarId });
     tokenRes = await fetch(`${LIVEAVATAR_BASE}/v1/sessions/token`, {
       method: "POST",
       headers: {
@@ -82,19 +68,14 @@ export async function POST() {
     });
   } catch (err) {
     console.error("[liveavatar token] network error (create token)", err);
-    logTokenEvent("liveavatar_token_request_network_error", {
-      error: err instanceof Error ? err.message : "network error"
-    });
     return NextResponse.json({ error: "Could not reach LiveAvatar API." }, { status: 502 });
   }
 
   const tokenText = await tokenRes.text();
   if (!tokenRes.ok) {
     console.error("[liveavatar token] create token failed", tokenRes.status, tokenText.slice(0, 500));
-    logTokenEvent("liveavatar_token_request_failed", { status: tokenRes.status, bodyPreview: tokenText.slice(0, 180) });
     return NextResponse.json({ error: "LiveAvatar rejected the session token request." }, { status: 502 });
   }
-  logTokenEvent("liveavatar_token_request_ok", { status: tokenRes.status });
 
   let tokenPayload: ApiEnvelope<{ session_id: string; session_token: string }>;
   try {
@@ -103,7 +84,6 @@ export async function POST() {
       session_token: string;
     }>;
   } catch {
-    logTokenEvent("liveavatar_token_invalid_json");
     return NextResponse.json({ error: "Invalid JSON from LiveAvatar (token)." }, { status: 502 });
   }
 
@@ -111,13 +91,11 @@ export async function POST() {
   const sessionToken = tokenPayload.data?.session_token;
   if (!sessionId || !sessionToken) {
     console.error("[liveavatar token] missing session fields", tokenPayload);
-    logTokenEvent("liveavatar_token_missing_fields", { hasSessionId: !!sessionId, hasSessionCredential: !!sessionToken });
     return NextResponse.json({ error: "Missing session_id or session_token from LiveAvatar." }, { status: 502 });
   }
 
   let startRes: Response;
   try {
-    logTokenEvent("liveavatar_start_request_sending", { sessionId });
     startRes = await fetch(`${LIVEAVATAR_BASE}/v1/sessions/start`, {
       method: "POST",
       headers: {
@@ -128,19 +106,14 @@ export async function POST() {
     });
   } catch (err) {
     console.error("[liveavatar token] network error (start)", err);
-    logTokenEvent("liveavatar_start_request_network_error", {
-      error: err instanceof Error ? err.message : "network error"
-    });
     return NextResponse.json({ error: "Could not reach LiveAvatar API (start)." }, { status: 502 });
   }
 
   const startText = await startRes.text();
   if (!startRes.ok) {
     console.error("[liveavatar token] start failed", startRes.status, startText.slice(0, 500));
-    logTokenEvent("liveavatar_start_request_failed", { status: startRes.status, bodyPreview: startText.slice(0, 180) });
     return NextResponse.json({ error: "LiveAvatar failed to start the session." }, { status: 502 });
   }
-  logTokenEvent("liveavatar_start_request_ok", { status: startRes.status });
 
   let startPayload: ApiEnvelope<{
     session_id: string;
@@ -154,7 +127,6 @@ export async function POST() {
       livekit_client_token: string;
     }>;
   } catch {
-    logTokenEvent("liveavatar_start_invalid_json");
     return NextResponse.json({ error: "Invalid JSON from LiveAvatar (start)." }, { status: 502 });
   }
 
@@ -164,18 +136,9 @@ export async function POST() {
 
   if (!livekitUrl || !livekitToken) {
     console.error("[liveavatar token] missing LiveKit fields", startPayload);
-    logTokenEvent("liveavatar_start_missing_livekit_fields", {
-      hasLivekitUrl: !!livekitUrl,
-      hasLivekitCredential: !!livekitToken
-    });
     return NextResponse.json({ error: "Missing LiveKit credentials from LiveAvatar." }, { status: 502 });
   }
 
-  logTokenEvent("bootstrap_ready", {
-    sessionId: startedSessionId,
-    hasLivekitUrl: !!livekitUrl,
-    hasLivekitCredential: !!livekitToken
-  });
   return NextResponse.json({
     livekitUrl,
     livekitToken,

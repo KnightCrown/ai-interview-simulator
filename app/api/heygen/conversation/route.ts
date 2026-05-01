@@ -1,7 +1,6 @@
 import { NextResponse } from "next/server";
 import { runConversationTurn } from "@/lib/heygen-engine";
 import type { ConversationRequest } from "@/lib/heygen-types";
-import { formatLiveAvatarLogLine, normalizeLiveAvatarLog } from "@/lib/live-avatar-debug";
 
 const FALLBACK_FACE_METRICS = {
   eyeContact: 50,
@@ -15,15 +14,6 @@ const FALLBACK_SPEECH_METRICS = {
   fillerWords: [] as string[],
   speakingPace: 0
 };
-
-function logConversationEvent(event: string, details: Record<string, unknown> = {}) {
-  console.log(formatLiveAvatarLogLine(normalizeLiveAvatarLog({
-    event,
-    source: "server-conversation",
-    pathname: "/api/heygen/conversation",
-    details
-  })));
-}
 
 /**
  * Free-flow live-avatar orchestrator. Called once on session start (`isStart`)
@@ -43,22 +33,12 @@ export async function POST(request: Request) {
   try {
     body = (await request.json()) as Partial<ConversationRequest>;
   } catch {
-    logConversationEvent("invalid_json");
     return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
   }
 
   if (!body.session) {
-    logConversationEvent("missing_session");
     return NextResponse.json({ error: "session is required." }, { status: 400 });
   }
-
-  logConversationEvent("turn_request_received", {
-    isStart: body.isStart === true,
-    latestLength: body.latestUserUtterance?.length ?? 0,
-    cumulativeLength: body.cumulativeAnswerTranscript?.length ?? 0,
-    mainQuestionsAsked: body.mainQuestionsAsked ?? 0,
-    currentMainQuestion: body.currentMainQuestion ?? null
-  });
 
   let decision;
   try {
@@ -76,18 +56,9 @@ export async function POST(request: Request) {
       candidateMood: body.candidateMood ?? null
     });
   } catch (err) {
-    logConversationEvent("turn_failed", {
-      error: err instanceof Error ? err.message : "conversation turn failed"
-    });
+    console.error("[heygen conversation]", err);
     return NextResponse.json({ error: "Conversation turn failed." }, { status: 500 });
   }
-
-  logConversationEvent("turn_decision_ready", {
-    classification: decision.classification,
-    isQuestionComplete: decision.isQuestionComplete,
-    shouldEndInterview: decision.shouldEndInterview,
-    replyLength: decision.replyText.length
-  });
 
   return NextResponse.json(decision);
 }

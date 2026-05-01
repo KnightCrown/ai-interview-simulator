@@ -185,7 +185,11 @@ Field rules:
   * "next_main_question" when isQuestionComplete is true AND we still have main questions remaining (remaining=${remainingMain}).
   * "wrap_up" when isQuestionComplete is true AND ${isLastMainQuestion ? "we are AT the cap and must close out the interview" : "the candidate clearly cannot continue"}. Only choose wrap_up when remaining is 0 OR the candidate has explicitly indicated they want to end.
 - transitionPhrase: 1 short sentence (max 12 words) the avatar says BEFORE the next question — only meaningful for "next_main_question" or "wrap_up". A real interviewer's quick acknowledgement: "Got it.", "Thanks — that's helpful.", "Makes sense.". Empty string for "follow_up".
-- followUpText: a single 1-2 sentence probing question. Only meaningful for "follow_up". Empty string otherwise. Speak in first person, present tense. Do NOT greet, do NOT thank, do NOT introduce yourself.
+- followUpText: the FULL line the avatar speaks for "follow_up" — one flowing utterance (max ~45 words), first person, present tense. It MUST make it obvious this is a follow-up (not a new topic): always start with a brief bridge, then your probe. Rotate styles across turns — do NOT use the same opener every time — mix these patterns naturally:
+  (a) Echo: briefly mirror their words ("You said you owned the rollout…", "When you mentioned the API rewrite…") then ask one sharper question.
+  (b) Expansion: phrases like "Let's expand on that for a moment", "I'd like to dig a bit deeper here", "Building on what you just told me".
+  (c) Warm interest: "That's interesting — walk me through…", "That's helpful — say more about…", "Okay — staying with that thread…".
+  Then flow straight into ONE focused follow-up question (no meta preamble like "as a follow-up question"). Empty string when classification is not "follow_up".
 - wrapUpText: a single 1-2 sentence closing line. Only meaningful for "wrap_up". Polite, professional, signals the interview is ending. Empty string otherwise.
 
 Behave like a human interviewer:
@@ -207,6 +211,34 @@ Context:
 - Latest user utterance (most recent only): ${JSON.stringify(input.latestUserUtterance)}
 - Recent conversation log (oldest first): ${JSON.stringify(recentLog)}
 `;
+}
+
+/** Deterministic variety for offline / LLM-failure follow-ups (mirrors prompt patterns). */
+function pickFallbackFollowUpText(latest: string, wordCount: number): string {
+  if (wordCount === 0) {
+    return "Take your time — when you're ready, could you walk me through one specific example from your work?";
+  }
+
+  const trimmed = latest.trim();
+  const templates: ((latestLine: string) => string)[] = [
+    (line) => {
+      const clip = line.slice(0, 52);
+      const mention =
+        clip.length > 14 ? `You mentioned ${clip}${line.length > 52 ? "…" : ""}. ` : "";
+      return `${mention}Let's expand on that — could you spell out your role and the outcome you measured?`;
+    },
+    () =>
+      "That's interesting — I'd like to dig a bit deeper. What was the hardest tradeoff, and how did you decide?",
+    () =>
+      "Building on what you just said — can you give me one concrete example with a timeline or a metric?",
+    () =>
+      "That's helpful — tell me a bit more about how that showed up for users or for the business.",
+    () =>
+      "Okay — staying with that thread: what would you do differently if you ran it again?"
+  ];
+
+  const idx = Math.abs(trimmed.length + wordCount) % templates.length;
+  return templates[idx](trimmed);
 }
 
 function fallbackDecision(input: {
@@ -241,9 +273,7 @@ function fallbackDecision(input: {
     isQuestionComplete: false,
     classification: "follow_up",
     transitionPhrase: "",
-    followUpText: wordCount === 0
-      ? "Take your time — could you walk me through a specific example from your work?"
-      : "Could you give me a concrete example with the actual outcome you drove?",
+    followUpText: pickFallbackFollowUpText(input.latestUserUtterance || input.cumulativeAnswerTranscript, wordCount),
     wrapUpText: ""
   };
 }
@@ -438,8 +468,10 @@ export async function runConversationTurn(input: {
   }
 
   if (decision.classification === "follow_up") {
+    const merged = `${input.cumulativeAnswerTranscript} ${input.latestUserUtterance}`.trim();
+    const wc = merged.split(/\s+/).filter(Boolean).length;
     return {
-      replyText: decision.followUpText || "Could you give me a concrete example with the outcome you drove?",
+      replyText: decision.followUpText || pickFallbackFollowUpText(input.latestUserUtterance || input.cumulativeAnswerTranscript, wc),
       classification: "follow_up",
       isQuestionComplete: false,
       shouldEndInterview: false

@@ -114,7 +114,7 @@ export default function LiveInterviewPage() {
   const [phase, setPhase] = useState<"setup" | "running" | "ending">("setup");
   const [latestEvaluation, setLatestEvaluation] = useState<AnswerEvaluation | null>(null);
   const [coachingThoughts, setCoachingThoughts] = useState<CoachingThought[]>([]);
-  const [showCoaching, setShowCoaching] = useState(true);
+  const [showCoaching, setShowCoaching] = useState(false);
   const [showOverlay, setShowOverlay] = useState(true);
   const [mainVideo, setMainVideo] = useState<MainVideo>("interviewer");
   const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
@@ -459,14 +459,19 @@ export default function LiveInterviewPage() {
         setPhase("ending");
         setStatusLabel("Wrapping up...");
         logLiveAvatarEvent("interview_ending", {}, "live-page");
-        // Wait briefly for the avatar's wrap-up utterance to finish on screen
-        // before tearing down the session and routing to results.
-        setTimeout(async () => {
+        void (async () => {
+          const maxWaitMs = Math.min(120_000, Math.max(28_000, decision.replyText.length * 55 + 14_000));
+          try {
+            await avatar.waitForSpeakComplete(maxWaitMs);
+          } catch {
+            /* continue to teardown */
+          }
+          await new Promise((r) => window.setTimeout(r, 900));
           await avatar.stop();
           stopListening();
           persistLiveTranscriptAndComplete();
           router.push("/results");
-        }, 5000);
+        })();
         return;
       }
 
@@ -498,47 +503,40 @@ export default function LiveInterviewPage() {
         setStatusLabel("Listening...");
       }, fallbackMs);
     },
-    [avatar, persistLiveTranscriptAndComplete, resetTranscript, router, setCaptureEnabled, setSession, speechIsSupported, startListening, stopListening]
+    [
+      avatar,
+      persistLiveTranscriptAndComplete,
+      resetTranscript,
+      router,
+      setCaptureEnabled,
+      setSession,
+      speechIsSupported,
+      startListening,
+      stopListening
+    ]
   );
 
   const applyDecisionRef = useRef(applyDecision);
   applyDecisionRef.current = applyDecision;
 
-  const [utteranceSubmitBusy, setUtteranceSubmitBusy] = useState(false);
-
-  const performUtteranceSubmission = useCallback(async (opts: { source: "debounce" | "manual_submit" }) => {
+  const performUtteranceSubmission = useCallback(async () => {
     if (phaseRef.current !== "running" || speakingRef.current) return;
     if (isSubmittingRef.current) return;
 
-    const requireSubstantive = opts.source === "debounce";
     const candidateText = `${transcriptRef.current} ${interimTranscriptRef.current}`.trim();
     const delta = getUnsubmittedUtteranceDelta(candidateText, lastSubmittedTranscriptRef.current, {
-      requireSubstantive
+      requireSubstantive: true
     });
     if (!delta) return;
 
-    if (opts.source === "manual_submit") {
-      micPausedByUserRef.current = false;
-      setMicPausedByUser(false);
-      if (debounceTimerRef.current !== null) {
-        window.clearTimeout(debounceTimerRef.current);
-        debounceTimerRef.current = null;
-      }
-      logLiveAvatarEvent("manual_submit_invoked", {
-        deltaLength: delta.length,
-        deltaPreview: delta.slice(0, 120)
-      }, "live-page");
-    }
-
     isSubmittingRef.current = true;
-    setUtteranceSubmitBusy(true);
     lastSubmittedTranscriptRef.current = candidateText;
     setStatusLabel("Thinking...");
     logLiveAvatarEvent("utterance_sent_to_orchestrator", {
       textLength: delta.length,
       textPreview: delta.slice(0, 120),
       fullCaptionLength: candidateText.length,
-      trigger: opts.source
+      trigger: "debounce"
     }, "live-page");
 
     const userEntry: ConversationLogEntry = {
@@ -563,8 +561,7 @@ export default function LiveInterviewPage() {
       }, "live-page");
     } finally {
       isSubmittingRef.current = false;
-      setUtteranceSubmitBusy(false);
-      logLiveAvatarEvent("utterance_submission_complete", { trigger: opts.source }, "live-page");
+      logLiveAvatarEvent("utterance_submission_complete", { trigger: "debounce" }, "live-page");
     }
   }, []);
 
@@ -597,18 +594,6 @@ export default function LiveInterviewPage() {
     setStatusLabel("Listening...");
     logLiveAvatarEvent("manual_resume_listening", {}, "live-page");
   }, [setCaptureEnabled, speechIsSupported, startListening]);
-
-  const handleSubmitUtteranceNow = useCallback(() => {
-    void performUtteranceSubmissionRef.current({ source: "manual_submit" });
-  }, []);
-
-  const canSubmitUtteranceNow = useMemo(() => {
-    if (phase !== "running" || avatar.isSpeaking || utteranceSubmitBusy) return false;
-    const full = `${transcript} ${interimTranscript}`.trim();
-    return (
-      getUnsubmittedUtteranceDelta(full, lastSubmittedTranscriptRef.current, { requireSubstantive: false }) !== null
-    );
-  }, [phase, avatar.isSpeaking, utteranceSubmitBusy, transcript, interimTranscript, conversationLog.length]);
 
   // Re-open the mic only when the avatar *finishes* speaking (isSpeaking goes
   // true → false). Opening whenever isSpeaking was false races applyDecision:
@@ -675,7 +660,7 @@ export default function LiveInterviewPage() {
     }, "live-page");
     debounceTimerRef.current = window.setTimeout(() => {
       debounceTimerRef.current = null;
-      void performUtteranceSubmissionRef.current({ source: "debounce" });
+      void performUtteranceSubmissionRef.current();
     }, END_OF_UTTERANCE_DEBOUNCE_MS);
 
     return () => {
@@ -1113,19 +1098,9 @@ export default function LiveInterviewPage() {
 
           <div className="order-2 mx-auto w-full max-w-4xl rounded-2xl border border-slate-200 bg-white px-6 py-5 shadow-panel sm:px-8 sm:py-6 lg:col-start-2 lg:row-start-2 dark:border-slate-700 dark:bg-slate-900">
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-500 dark:text-slate-400">Live conversation</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={handleSubmitUtteranceNow}
-                disabled={!canSubmitUtteranceNow}
-                className="rounded-xl border border-amber-400/80 bg-amber-50 px-4 py-2 text-sm font-semibold text-amber-950 shadow-sm transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400 dark:border-amber-500/50 dark:bg-amber-950/40 dark:text-amber-100 dark:hover:bg-amber-900/50 dark:disabled:border-slate-700 dark:disabled:bg-slate-800 dark:disabled:text-slate-500"
-              >
-                Send now (debug)
-              </button>
-              <span className="text-xs text-slate-500 dark:text-slate-400">
-                Sends the current caption immediately; clears mic pause and keeps the 2s silence auto-send.
-              </span>
-            </div>
+            <p className="mt-2 text-xs leading-5 text-slate-500 dark:text-slate-400">
+              After you stop speaking, silence of more than two seconds sends your response to the interviewer (unless listening is paused).
+            </p>
             <div className="mt-3 max-h-72 space-y-3 overflow-y-auto pr-1">
               {conversationLog.length === 0 ? (
                 <p className="text-sm text-slate-500 dark:text-slate-400">The interviewer will speak first. Your responses will appear here as you talk.</p>

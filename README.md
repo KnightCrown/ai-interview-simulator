@@ -54,9 +54,10 @@ All agents are **stateless and composable**. The full session state is owned by 
 - OpenAI `gpt-4.1-mini`  
 
 **Speech and Audio**  
-- ElevenLabs `eleven_turbo_v2_5` for streaming TTS  
+- ElevenLabs `eleven_turbo_v2_5` for streaming TTS (classic `/interview`)  
+- **HeyGen LiveAvatar** + **LiveKit** — live video interviewer on `/interview/live` (FULL mode; server-minted session token; OpenAI decides each utterance via `/api/heygen/conversation`)  
 - Web Speech API for real-time transcription  
-- Web Audio API for amplitude analysis and lip-sync  
+- Web Audio API for amplitude analysis and lip-sync (classic avatar)  
 
 **Vision**  
 - MediaPipe Face Mesh for real-time facial landmark tracking  
