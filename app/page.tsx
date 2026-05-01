@@ -162,11 +162,10 @@ export default function LandingPage() {
   const [selectedRole, setSelectedRole] = useState("Software Developer");
   const [customRole, setCustomRole] = useState("");
   const [difficulty, setDifficulty] = useState<InterviewDifficulty>("Medium");
-  const [resumeMode, setResumeMode] = useState<ResumeMode>("Skip Resume");
+  const [resumeMode, setResumeMode] = useState<ResumeMode>("Use Sample Resume");
   const [uploadedResumeName, setUploadedResumeName] = useState("");
-  // When true, the user opts into the new HeyGen Live Avatar (Beta) flow which
-  // routes to /interview/live instead of the classic /interview page.
-  const [useLiveAvatar, setUseLiveAvatar] = useState(false);
+  /** Live interview → HeyGen LiveAvatar (`/interview/live`). Practice mode → structured flow (`/interview`). */
+  const [interviewMode, setInterviewMode] = useState<"live" | "practice">("practice");
   const [isStarting, setIsStarting] = useState(false);
   const [isCheckingMedia, setIsCheckingMedia] = useState(false);
   const [showPreparationOverlay, setShowPreparationOverlay] = useState(false);
@@ -396,12 +395,15 @@ export default function LandingPage() {
     );
 
     try {
+      const resumeModeForApi: ResumeMode =
+        resumeMode === "Use Sample Resume" && !uploadedResumeName.trim() ? "Skip Resume" : resumeMode;
+
       const response = await fetch("/api/interview/start", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ role: normalizedRole, difficulty, resumeMode })
+        body: JSON.stringify({ role: normalizedRole, difficulty, resumeMode: resumeModeForApi })
       });
 
       if (!response.ok) {
@@ -416,7 +418,7 @@ export default function LandingPage() {
       await minDisplayPromise;
 
       setSession(data.session);
-      router.push(useLiveAvatar ? "/interview/live" : "/interview");
+      router.push(interviewMode === "live" ? "/interview/live" : "/interview");
     } catch (error) {
       setStartError(error instanceof Error ? error.message : "Could not start the interview.");
     } finally {
@@ -887,27 +889,29 @@ export default function LandingPage() {
 
       {showSetupModal ? (
         <div className="fixed inset-0 z-50 grid place-items-center bg-ink/45 px-4 py-8 backdrop-blur-sm dark:bg-black/65">
-          <div className="panel relative max-h-[calc(100vh-4rem)] w-full max-w-xl overflow-y-auto p-7">
+          <div className="panel relative max-h-[calc(100vh-4rem)] w-full max-w-2xl overflow-y-auto rounded-3xl p-7 sm:p-8">
             <button
               type="button"
               onClick={() => setShowSetupModal(false)}
-              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-sm font-semibold text-slate-500 transition hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
+              className="absolute right-4 top-4 grid h-9 w-9 place-items-center rounded-full text-lg font-semibold leading-none text-slate-500 transition hover:bg-slate-100 hover:text-ink dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-white"
               aria-label="Close start interview"
             >
-              x
+              ×
             </button>
-            <h2 className="text-2xl font-semibold text-ink dark:text-white">Start your interview</h2>
-            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">A few quick choices and we will set up your practice room.</p>
+            <h2 className="pr-10 text-2xl font-semibold text-ink dark:text-white">Start your interview</h2>
+            <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+              A few quick choices and we will set up your practice room.
+            </p>
 
             <form
-              className="mt-6 space-y-5"
+              className="mt-6 space-y-6"
               onSubmit={(event) => {
                 event.preventDefault();
                 void openDeviceDialog();
               }}
             >
-              <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">
-                Job role
+              <div>
+                <span className="block text-sm font-medium text-slate-700 dark:text-slate-300">Job role</span>
                 <div ref={roleDropdownRef} className="relative mt-2">
                   <button
                     type="button"
@@ -953,7 +957,7 @@ export default function LandingPage() {
                     </ul>
                   ) : null}
                 </div>
-              </span>
+              </div>
 
               {selectedRole === "Other" ? (
                 <label className="block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -970,15 +974,15 @@ export default function LandingPage() {
                 </label>
               ) : null}
 
-              <fieldset className="space-y-3">
+              <fieldset>
                 <legend className="text-sm font-medium text-slate-700 dark:text-slate-300">Question difficulty</legend>
-                <div className="grid gap-3 sm:grid-cols-3">
+                <div className="mt-2 grid grid-cols-3 gap-2 sm:gap-3">
                   {(["Easy", "Medium", "Hard"] as InterviewDifficulty[]).map((option) => (
                     <label
                       key={option}
-                      className={`cursor-pointer rounded-2xl border px-4 py-3 text-center text-sm font-semibold transition ${
+                      className={`cursor-pointer rounded-2xl border px-3 py-3 text-center text-sm font-semibold transition sm:px-4 ${
                         difficulty === option
-                          ? "border-teal-500 bg-teal-50 text-teal-800 dark:border-teal-400 dark:bg-teal-900/40 dark:text-teal-200"
+                          ? "border-teal-500 bg-teal-50 text-teal-800 ring-1 ring-teal-500/30 dark:border-teal-400 dark:bg-teal-900/40 dark:text-teal-200"
                           : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-slate-500"
                       }`}
                     >
@@ -996,79 +1000,234 @@ export default function LandingPage() {
               </fieldset>
 
               <fieldset className="space-y-3">
-                <legend className="text-sm font-medium text-slate-700 dark:text-slate-300">Resume option</legend>
-                <label
-                  className={`block cursor-pointer rounded-2xl border px-4 py-4 transition ${
-                    uploadedResumeName
-                      ? "border-teal-500 bg-teal-50 dark:border-teal-400 dark:bg-teal-900/30"
-                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
-                  }`}
-                >
-                  <input
-                    type="file"
-                    accept=".pdf,.doc,.docx,.txt"
-                    className="sr-only"
-                    onChange={(event) => {
-                      const file = event.target.files?.[0];
-                      setUploadedResumeName(file?.name ?? "");
-                      setResumeMode("Skip Resume");
+                <legend className="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-300">
+                  <span>Interview mode</span>
+                  <span className="rounded-full bg-orange-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-orange-800 dark:bg-orange-900/50 dark:text-orange-200">
+                    New
+                  </span>
+                </legend>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={interviewMode === "live"}
+                    onClick={() => {
+                      setInterviewMode("live");
                       setStartError(null);
                     }}
-                  />
-                  <span className="flex items-start justify-between gap-4">
-                    <span>
-                      <span className="block font-medium text-ink dark:text-white">Upload resume</span>
-                      <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
-                        {uploadedResumeName || "Add your own resume for a more personalized interview later."}
-                      </span>
+                    className={`relative rounded-2xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                      interviewMode === "live"
+                        ? "border-teal-500 bg-teal-50/90 ring-1 ring-teal-500 dark:border-teal-400 dark:bg-teal-900/25 dark:ring-teal-400/50"
+                        : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800/80 dark:hover:border-slate-600"
+                    }`}
+                  >
+                    <span
+                      className={`absolute left-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 ${
+                        interviewMode === "live"
+                          ? "border-teal-600 bg-teal-600 dark:border-teal-400 dark:bg-teal-400"
+                          : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {interviewMode === "live" ? <span className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" /> : null}
                     </span>
-                    <span className="rounded-full bg-teal-100 px-3 py-1 text-xs font-semibold text-teal-700 dark:bg-teal-900/50 dark:text-teal-200">Recommended</span>
-                  </span>
-                </label>
+                    <div className="flex gap-3 pl-7 pt-0.5">
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-teal-100 text-teal-700 dark:bg-teal-900/40 dark:text-teal-300">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                          <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+                          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                          <line x1="12" x2="12" y1="19" y2="22" />
+                          <line x1="8" x2="16" y1="22" y2="22" />
+                        </svg>
+                      </span>
+                      <span className="min-w-0">
+                        <span className="flex flex-wrap items-center gap-2">
+                          <span className="font-semibold text-ink dark:text-white">Live interview</span>
+                          <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-700 dark:bg-teal-900/50 dark:text-teal-200">
+                            Beta
+                          </span>
+                        </span>
+                        <span className="mt-1 block text-sm leading-snug text-slate-500 dark:text-slate-400">
+                          Live interview with an AI interviewer.
+                        </span>
+                      </span>
+                    </div>
+                  </button>
 
-                <label className="flex cursor-pointer items-start gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-4 transition hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500">
-                  <input
-                    checked={resumeMode === "Skip Resume" && !uploadedResumeName}
-                    onChange={() => {
-                      setUploadedResumeName("");
-                      setResumeMode("Skip Resume");
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={interviewMode === "practice"}
+                    onClick={() => {
+                      setInterviewMode("practice");
+                      setStartError(null);
                     }}
-                    type="radio"
-                    name="resumeMode"
-                    className="mt-1"
-                  />
-                  <span>
-                    <span className="block font-medium text-ink dark:text-white">Skip resume</span>
-                    <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">Run the interview without resume context.</span>
+                    className={`relative rounded-2xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-500 ${
+                      interviewMode === "practice"
+                        ? "border-orange-500 bg-orange-50/90 ring-1 ring-orange-500 dark:border-orange-400 dark:bg-orange-950/30 dark:ring-orange-400/40"
+                        : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800/80 dark:hover:border-slate-600"
+                    }`}
+                  >
+                    <span
+                      className={`absolute left-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 ${
+                        interviewMode === "practice"
+                          ? "border-orange-600 bg-orange-600 dark:border-orange-400 dark:bg-orange-500"
+                          : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {interviewMode === "practice" ? <span className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" /> : null}
+                    </span>
+                    <div className="flex gap-3 pl-7 pt-0.5">
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-orange-100 text-orange-700 dark:bg-orange-900/45 dark:text-orange-300">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+                          <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+                          <path d="M9 10h6M12 7v6" />
+                        </svg>
+                      </span>
+                      <span className="min-w-0">
+                        <span className="font-semibold text-ink dark:text-white">Practice mode</span>
+                        <span className="mt-1 block text-sm leading-snug text-slate-500 dark:text-slate-400">
+                          Structured Q&amp;A with Guided Feedback, Using 2D Avatars.
+                        </span>
+                      </span>
+                    </div>
+                  </button>
+                </div>
+                <div className="flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50/90 px-4 py-3 dark:border-slate-700 dark:bg-slate-800/50">
+                  <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-200 text-sm font-bold text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                    i
                   </span>
-                </label>
+                  <p className="flex-1 text-sm leading-snug text-slate-600 dark:text-slate-400">
+                    Live Interview and Practice Mode are completely different! Try Both!
+                  </p>
+                </div>
               </fieldset>
 
-              <label
-                className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-4 transition ${
-                  useLiveAvatar
-                    ? "border-teal-500 bg-teal-50 dark:border-teal-400 dark:bg-teal-900/30"
-                    : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
-                }`}
-              >
-                <input
-                  type="checkbox"
-                  checked={useLiveAvatar}
-                  onChange={(event) => setUseLiveAvatar(event.target.checked)}
-                  className="mt-1"
-                />
-                <span>
-                  <span className="flex items-center gap-2">
-                    <span className="block font-medium text-ink dark:text-white">Live HeyGen avatar</span>
-                    <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-700 dark:bg-teal-900/50 dark:text-teal-200">Beta</span>
-                  </span>
-                  <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
-                    Talk to a streaming HeyGen interviewer with free-flow follow-ups, barge-in, and a 3-question wrap-up. Replaces the 2D avatar for this session.
-                  </span>
-                </span>
-              </label>
+              <fieldset className="space-y-3">
+                <legend className="text-sm font-medium text-slate-700 dark:text-slate-300">Resume (optional)</legend>
 
-              <p className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800/70 dark:text-slate-400">
+                <div
+                  role="radio"
+                  aria-checked={resumeMode === "Use Sample Resume"}
+                  tabIndex={0}
+                  onClick={() => {
+                    setResumeMode("Use Sample Resume");
+                    setStartError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setResumeMode("Use Sample Resume");
+                      setStartError(null);
+                    }
+                  }}
+                  className={`relative w-full cursor-pointer rounded-2xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                    resumeMode === "Use Sample Resume"
+                      ? "border-teal-500 bg-teal-50/80 ring-1 ring-teal-500/30 dark:border-teal-400 dark:bg-teal-900/25"
+                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
+                  }`}
+                >
+                  <span
+                    className={`absolute left-3 top-4 grid h-5 w-5 place-items-center rounded-full border-2 ${
+                      resumeMode === "Use Sample Resume"
+                        ? "border-teal-600 bg-teal-600 dark:border-teal-400 dark:bg-teal-400"
+                        : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
+                    }`}
+                    aria-hidden="true"
+                  >
+                    {resumeMode === "Use Sample Resume" ? <span className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" /> : null}
+                  </span>
+                  <div className="flex flex-wrap items-start justify-between gap-3 pl-8">
+                    <div className="flex min-w-0 flex-1 items-start gap-2">
+                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                        </svg>
+                      </span>
+                      <div>
+                        <span className="font-semibold text-ink dark:text-white">Upload resume</span>
+                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+                          Personalise feedback and questions based on your resume.
+                        </p>
+                      </div>
+                    </div>
+                    <span className="rounded-full bg-teal-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:bg-teal-900/50 dark:text-teal-200">
+                      Recommended
+                    </span>
+                  </div>
+                  <label className="mt-4 block cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white/80 px-4 py-8 text-center dark:border-slate-600 dark:bg-slate-900/40">
+                    <input
+                      type="file"
+                      accept=".pdf,.doc,.docx,.txt"
+                      className="sr-only"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        setUploadedResumeName(file?.name ?? "");
+                        setResumeMode("Use Sample Resume");
+                        setStartError(null);
+                      }}
+                    />
+                    <span className="text-sm font-semibold text-teal-700 dark:text-teal-300">
+                      {uploadedResumeName ? uploadedResumeName : "Upload your resume"}
+                    </span>
+                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
+                      PDF, DOCX, or TXT · max 10 MB
+                    </span>
+                  </label>
+                </div>
+
+                <div
+                  role="radio"
+                  aria-checked={resumeMode === "Skip Resume"}
+                  tabIndex={0}
+                  onClick={() => {
+                    setResumeMode("Skip Resume");
+                    setUploadedResumeName("");
+                    setStartError(null);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setResumeMode("Skip Resume");
+                      setUploadedResumeName("");
+                      setStartError(null);
+                    }
+                  }}
+                  className={`relative flex w-full cursor-pointer gap-3 rounded-2xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
+                    resumeMode === "Skip Resume"
+                      ? "border-slate-500 bg-slate-50 ring-1 ring-slate-400/40 dark:border-slate-500 dark:bg-slate-800/80"
+                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
+                  }`}
+                >
+                  <span
+                    className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 ${
+                      resumeMode === "Skip Resume"
+                        ? "border-slate-700 bg-slate-700 dark:border-slate-300 dark:bg-slate-300"
+                        : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
+                    }`}
+                    aria-hidden="true"
+                  >
+                    {resumeMode === "Skip Resume" ? <span className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" /> : null}
+                  </span>
+                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                      <line x1="12" y1="18" x2="12" y2="12" />
+                      <line x1="9" y1="15" x2="15" y2="15" />
+                    </svg>
+                  </span>
+                  <span className="min-w-0">
+                    <span className="font-semibold text-ink dark:text-white">Skip resume</span>
+                    <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
+                      Run the interview without resume context.
+                    </span>
+                  </span>
+                </div>
+              </fieldset>
+
+              <p className="rounded-2xl bg-slate-50 px-4 py-3 text-xs leading-relaxed text-slate-500 dark:bg-slate-800/70 dark:text-slate-400">
                 Next step: pick the microphone and camera you want to use during the interview.
               </p>
 
@@ -1077,7 +1236,7 @@ export default function LandingPage() {
               <button
                 type="submit"
                 disabled={isStarting || isCheckingMedia}
-                className="w-full rounded-2xl bg-ink px-5 py-3 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-teal-500 dark:text-white dark:hover:bg-teal-400"
+                className="w-full rounded-2xl bg-ink px-5 py-3.5 text-base font-semibold text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-70 dark:bg-slate-900 dark:hover:bg-slate-800"
               >
                 {startButtonLabel}
               </button>

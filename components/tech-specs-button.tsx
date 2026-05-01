@@ -19,8 +19,8 @@ const TECH_SECTIONS: TechSection[] = [
   {
     title: "Voice & Audio",
     items: [
-      { name: "ElevenLabs", description: "Streaming TTS interviewer (classic /interview)" },
-      { name: "HeyGen LiveAvatar", description: "Live video interviewer over LiveKit FULL mode (/interview/live Beta)" },
+      { name: "ElevenLabs", description: "Streaming TTS for practice mode (/interview)" },
+      { name: "HeyGen LiveAvatar", description: "Live video interviewer over LiveKit FULL mode (live interview · /interview/live Beta)" },
       { name: "LiveKit", description: "Real-time avatar video/audio transport for LiveAvatar sessions" },
       { name: "Web Speech API", description: "Real-time transcription" },
       { name: "Web Audio API", description: "Live amplitude analysis" }

@@ -748,7 +748,7 @@ export default function InterviewPage() {
         <div className="mx-auto flex max-w-[118rem] flex-col gap-4 lg:grid lg:grid-cols-[1fr_auto_1fr] lg:items-center">
           <div className="flex items-center gap-4">
             <div className="grid h-10 w-10 place-items-center rounded-xl bg-ink text-sm font-bold text-white dark:bg-white dark:text-ink">AI</div>
-            <h1 className="text-base font-semibold sm:text-lg dark:text-white">{session.role} Simulation</h1>
+            <h1 className="text-base font-semibold sm:text-lg dark:text-white">{session.role} · Practice mode</h1>
           </div>
 
           <div className="justify-self-center text-center">

@@ -54,8 +54,8 @@ All agents are **stateless and composable**. The full session state is owned by 
 - OpenAI `gpt-4.1-mini`  
 
 **Speech and Audio**  
-- ElevenLabs `eleven_turbo_v2_5` for streaming TTS (classic `/interview`)  
-- **HeyGen LiveAvatar** + **LiveKit** — live video interviewer on `/interview/live` (FULL mode; server-minted session token; OpenAI decides each utterance via `/api/heygen/conversation`)  
+- ElevenLabs `eleven_turbo_v2_5` for streaming TTS in **practice mode** (`/interview`)  
+- **HeyGen LiveAvatar** + **LiveKit** — **live interview** on `/interview/live` (FULL mode; server-minted session token; OpenAI decides each utterance via `/api/heygen/conversation`)  
 - Web Speech API for real-time transcription  
 - Web Audio API for amplitude analysis and lip-sync (classic avatar)  
 
@@ -86,7 +86,7 @@ All agents are **stateless and composable**. The full session state is owned by 
 
 ## Live HeyGen Avatar (Beta)
 
-A second interview flow at `/interview/live` swaps the 2D avatar + ElevenLabs TTS for a **LiveAvatar** session (HeyGen’s streaming avatar REST API is sunset; see the [migration guide](https://docs.liveavatar.com/docs/faq/migration-guide)). The home-page form has a **Live HeyGen avatar (Beta)** toggle that routes there instead of `/interview`.
+Choose **Live interview** or **Practice mode** on the home page: **Live interview** (`/interview/live`) uses **LiveAvatar** over LiveKit instead of the 2D avatar + ElevenLabs (HeyGen’s legacy streaming REST API is sunset; see the [migration guide](https://docs.liveavatar.com/docs/faq/migration-guide)). **Practice mode** (`/interview`) keeps the structured Q&A flow with the 2D avatar and ElevenLabs TTS.
 
 How it differs from the classic flow:
 

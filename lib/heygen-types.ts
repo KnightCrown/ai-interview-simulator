@@ -37,7 +37,7 @@ export interface ConversationDecision {
   isQuestionComplete: boolean;
   /**
    * Populated when `isQuestionComplete === true`. The frontend uses this to
-   * drive the coaching panel just like the classic /interview route.
+   * drive the coaching panel just like practice mode (`/interview`).
    */
   evaluation?: AnswerEvaluation;
   /** True once the cap of MAIN_QUESTION_CAP main questions has been answered. */
