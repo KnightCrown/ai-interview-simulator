@@ -8,6 +8,7 @@ import {
   segmentLiveTranscriptByMainQuestion,
   type LiveTranscriptMessage
 } from "@/lib/live-interview-finalize";
+import { MAIN_QUESTION_CAP } from "@/lib/heygen-engine";
 import { useInterviewSession } from "@/lib/session-store";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { TechSpecsButton } from "@/components/tech-specs-button";
@@ -363,6 +364,11 @@ export default function ResultsPage() {
     setLiveTimelineQuestionIdx(0);
   }, [session?.id]);
 
+  useEffect(() => {
+    if (!useLiveAnswerTimelineTabs) return;
+    setLiveTimelineQuestionIdx((idx) => Math.min(idx, MAIN_QUESTION_CAP - 1));
+  }, [useLiveAnswerTimelineTabs, session?.liveConversationTranscript]);
+
   if (!session) {
     return null;
   }
@@ -623,7 +629,7 @@ export default function ResultsPage() {
                         Live session transcript by main question (includes greetings, follow-ups, and wrap-up where recorded).
                       </p>
                       <div className="flex overflow-x-auto border-b border-slate-200 dark:border-slate-700">
-                        {([0, 1, 2] as const).map((qi) => (
+                        {Array.from({ length: MAIN_QUESTION_CAP }, (_, qi) => (
                           <button
                             key={qi}
                             type="button"
