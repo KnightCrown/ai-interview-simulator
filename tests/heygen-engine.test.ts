@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   MAIN_QUESTION_CAP,
+  MAX_FOLLOW_UPS_BEFORE_ADVANCE,
   buildOrchestratorPrompt,
+  countFollowUpAvatarTurnsSinceLastMainQuestion,
   decideNextUtterance,
   runConversationTurn
 } from "@/lib/heygen-engine";
@@ -192,6 +194,39 @@ describe("decideNextUtterance", () => {
   });
 });
 
+describe("countFollowUpAvatarTurnsSinceLastMainQuestion", () => {
+  it("returns 0 with no next_main_question anchor", () => {
+    expect(countFollowUpAvatarTurnsSinceLastMainQuestion([])).toBe(0);
+    expect(
+      countFollowUpAvatarTurnsSinceLastMainQuestion([
+        { role: "avatar", text: "Hi", timestamp: 1, classification: "follow_up" }
+      ])
+    ).toBe(0);
+  });
+
+  it("counts follow_ups only after the latest next_main_question", () => {
+    const log: ConversationLogEntry[] = [
+      { role: "avatar", text: "Q1", timestamp: 1, classification: "next_main_question" },
+      { role: "user", text: "a", timestamp: 2 },
+      { role: "avatar", text: "fu1", timestamp: 3, classification: "follow_up" },
+      { role: "user", text: "b", timestamp: 4 },
+      { role: "avatar", text: "fu2", timestamp: 5, classification: "follow_up" }
+    ];
+    expect(countFollowUpAvatarTurnsSinceLastMainQuestion(log)).toBe(2);
+    expect(MAX_FOLLOW_UPS_BEFORE_ADVANCE).toBe(2);
+  });
+
+  it("resets count after a newer next_main_question", () => {
+    const log: ConversationLogEntry[] = [
+      { role: "avatar", text: "Q1", timestamp: 1, classification: "next_main_question" },
+      { role: "avatar", text: "fu", timestamp: 2, classification: "follow_up" },
+      { role: "avatar", text: "Q2", timestamp: 3, classification: "next_main_question" },
+      { role: "user", text: "x", timestamp: 4 }
+    ];
+    expect(countFollowUpAvatarTurnsSinceLastMainQuestion(log)).toBe(0);
+  });
+});
+
 describe("runConversationTurn", () => {
   it("on isStart, returns a greeting + first main question without calling the LLM runner", async () => {
     const session = freshSession();
@@ -317,5 +352,89 @@ describe("runConversationTurn", () => {
     expect(decision.evaluation).toBeTruthy();
     expect(decision.session?.turns.length).toBe(1);
     expect(decision.replyText.length).toBeGreaterThan(0);
+  });
+
+  it("after two follow-ups on the same main question, forces next_main_question with a move-on acknowledgement", async () => {
+    const session = freshSession();
+    const conversationLog: ConversationLogEntry[] = [
+      { role: "avatar", text: "Walk me through a project.", timestamp: 1, classification: "next_main_question" },
+      { role: "user", text: "yeah", timestamp: 2 },
+      { role: "avatar", text: "Can you give an example?", timestamp: 3, classification: "follow_up" },
+      { role: "user", text: "sort of", timestamp: 4 },
+      { role: "avatar", text: "What was the outcome?", timestamp: 5, classification: "follow_up" },
+      { role: "user", text: "not really sure", timestamp: 6 }
+    ];
+
+    const llmAlwaysFollowUp = vi.fn(async () =>
+      JSON.stringify({
+        isQuestionComplete: false,
+        classification: "follow_up",
+        transitionPhrase: "",
+        followUpText: "Any more detail?",
+        wrapUpText: ""
+      })
+    );
+
+    const decision = await runConversationTurn({
+      session,
+      conversationLog,
+      latestUserUtterance: "not really sure",
+      mainQuestionsAsked: 1,
+      currentMainQuestion: "Walk me through a project.",
+      isStart: false,
+      cumulativeAnswerTranscript: "yeah sort of not really sure",
+      durationSeconds: 12,
+      speechMetrics: SAMPLE_SPEECH,
+      faceMetrics: SAMPLE_FACE,
+      candidateMood: SAMPLE_MOOD,
+      runLLM: llmAlwaysFollowUp
+    });
+
+    expect(llmAlwaysFollowUp).toHaveBeenCalled();
+    expect(decision.classification).toBe("next_main_question");
+    expect(decision.isQuestionComplete).toBe(true);
+    expect(decision.evaluation).toBeTruthy();
+    expect(decision.session?.turns.length).toBe(1);
+    expect(decision.replyText.toLowerCase()).toContain("move on");
+    expect(decision.shouldEndInterview).toBe(false);
+  });
+
+  it("after two follow-ups at the main-question cap, forces wrap_up", async () => {
+    const session = freshSession();
+    const conversationLog: ConversationLogEntry[] = [
+      { role: "avatar", text: "Why should we hire you?", timestamp: 1, classification: "next_main_question" },
+      { role: "user", text: "idk", timestamp: 2 },
+      { role: "avatar", text: "Probe one?", timestamp: 3, classification: "follow_up" },
+      { role: "user", text: "maybe", timestamp: 4 },
+      { role: "avatar", text: "Probe two?", timestamp: 5, classification: "follow_up" },
+      { role: "user", text: "still vague", timestamp: 6 }
+    ];
+
+    const decision = await runConversationTurn({
+      session,
+      conversationLog,
+      latestUserUtterance: "still vague",
+      mainQuestionsAsked: MAIN_QUESTION_CAP,
+      currentMainQuestion: "Why should we hire you?",
+      isStart: false,
+      cumulativeAnswerTranscript: "idk maybe still vague",
+      durationSeconds: 10,
+      speechMetrics: SAMPLE_SPEECH,
+      faceMetrics: SAMPLE_FACE,
+      candidateMood: SAMPLE_MOOD,
+      runLLM: async () =>
+        JSON.stringify({
+          isQuestionComplete: false,
+          classification: "follow_up",
+          transitionPhrase: "",
+          followUpText: "Again?",
+          wrapUpText: ""
+        })
+    });
+
+    expect(decision.classification).toBe("wrap_up");
+    expect(decision.shouldEndInterview).toBe(true);
+    expect(decision.replyText.toLowerCase()).toMatch(/wrap up|thanks/);
+    expect(decision.session?.turns.length).toBe(1);
   });
 });

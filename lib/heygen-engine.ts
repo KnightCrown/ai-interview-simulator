@@ -29,6 +29,33 @@ import { isTranscriptSubstantive } from "@/lib/transcript-utils";
 export const MAIN_QUESTION_CAP = 3;
 
 /**
+ * After this many interviewer follow-up utterances on the same main question,
+ * we advance to the next main question (or wrap-up at cap) even if the model
+ * still wants another follow-up — avoids endless probing on vague answers.
+ */
+export const MAX_FOLLOW_UPS_BEFORE_ADVANCE = 2;
+
+/** Count avatar lines classified `follow_up` since the latest `next_main_question`. */
+export function countFollowUpAvatarTurnsSinceLastMainQuestion(log: ConversationLogEntry[]): number {
+  let lastMainIdx = -1;
+  for (let i = 0; i < log.length; i++) {
+    const e = log[i];
+    if (e.role === "avatar" && e.classification === "next_main_question") {
+      lastMainIdx = i;
+    }
+  }
+  if (lastMainIdx === -1) return 0;
+  let count = 0;
+  for (let i = lastMainIdx + 1; i < log.length; i++) {
+    const e = log[i];
+    if (e.role === "avatar" && e.classification === "follow_up") {
+      count++;
+    }
+  }
+  return count;
+}
+
+/**
  * Result returned by `decideNextUtterance`. The orchestrator route (or test
  * harness) is responsible for turning this decision into a `ConversationDecision`
  * by running `evaluateAnswer` and `generateQuestion` when needed.
@@ -166,6 +193,7 @@ Behave like a human interviewer:
 - Never reveal you are an AI or mention HeyGen / OpenAI.
 - React specifically to what the candidate just said when probing follow-ups.
 - If the candidate is rambling or off-topic, redirect them gently.
+- Policy: at most ${MAX_FOLLOW_UPS_BEFORE_ADVANCE} follow-up rounds per main question; the system will advance afterward even if the answer stayed vague — prefer marking isQuestionComplete true once they have given their best effort.
 - Difficulty calibration: ${input.session.difficulty}. Easy = supportive coach. Medium = realistic peer. Hard = skeptical senior.
 
 Context:
@@ -380,7 +408,7 @@ export async function runConversationTurn(input: {
     };
   }
 
-  const decision = await decideNextUtterance(
+  let decision = await decideNextUtterance(
     {
       session: input.session,
       conversationLog: input.conversationLog,
@@ -391,6 +419,23 @@ export async function runConversationTurn(input: {
     },
     input.runLLM
   );
+
+  const followUpsSinceMain = countFollowUpAvatarTurnsSinceLastMainQuestion(input.conversationLog);
+
+  if (decision.classification === "follow_up" && followUpsSinceMain >= MAX_FOLLOW_UPS_BEFORE_ADVANCE) {
+    const atCap = input.mainQuestionsAsked >= MAIN_QUESTION_CAP;
+    decision = {
+      isQuestionComplete: true,
+      classification: atCap ? "wrap_up" : "next_main_question",
+      transitionPhrase: atCap
+        ? "Okay — we struggled to get a concrete answer on that last topic, so I'll wrap up here."
+        : "Okay — I'm still not hearing a concrete answer here, so let's move on.",
+      followUpText: "",
+      wrapUpText: atCap
+        ? "Thanks for taking the time today. We'll review everything and follow up with feedback shortly."
+        : ""
+    };
+  }
 
   if (decision.classification === "follow_up") {
     return {

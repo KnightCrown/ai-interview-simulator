@@ -38,6 +38,8 @@ import { loadMediaDevicePreferences, saveMediaDevicePreferences } from "@/lib/me
 const END_OF_UTTERANCE_DEBOUNCE_MS = 2000;
 const CANDIDATE_MOOD_SAMPLE_MS = 2000;
 
+type MainVideo = "interviewer" | "candidate";
+
 function getConfidenceColor(score: number): string {
   if (score <= 30) return "#ef4444";
   if (score >= 70) return "#22c55e";
@@ -114,7 +116,13 @@ export default function LiveInterviewPage() {
   const [coachingThoughts, setCoachingThoughts] = useState<CoachingThought[]>([]);
   const [showCoaching, setShowCoaching] = useState(true);
   const [showOverlay, setShowOverlay] = useState(true);
+  const [mainVideo, setMainVideo] = useState<MainVideo>("interviewer");
   const [cameraMenuOpen, setCameraMenuOpen] = useState(false);
+  const [micMenuOpen, setMicMenuOpen] = useState(false);
+  const [audioDevices, setAudioDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioDeviceId, setSelectedAudioDeviceId] = useState<string>(
+    () => loadMediaDevicePreferences()?.audioInputId ?? ""
+  );
   const [error, setError] = useState<string | null>(null);
   const [statusLabel, setStatusLabel] = useState("Tap Begin to start");
 
@@ -195,6 +203,20 @@ export default function LiveInterviewPage() {
   useEffect(() => {
     currentMainQuestionRef.current = currentMainQuestion;
   }, [currentMainQuestion]);
+
+  useEffect(() => {
+    if (mainVideo !== "candidate") {
+      setCameraMenuOpen(false);
+      setMicMenuOpen(false);
+    }
+  }, [mainVideo]);
+
+  useEffect(() => {
+    navigator.mediaDevices
+      .enumerateDevices()
+      .then((devices) => setAudioDevices(devices.filter((d) => d.kind === "audioinput")))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     speakingRef.current = avatar.isSpeaking;
@@ -872,15 +894,142 @@ export default function LiveInterviewPage() {
           <div className="relative order-1 mx-auto aspect-video max-h-[46vh] w-full max-w-4xl overflow-hidden rounded-2xl bg-slate-950 shadow-panel lg:col-start-2 lg:row-start-1">
             {/* LiveKit publishes avatar audio as a separate track; it must attach to an unmuted <audio>. */}
             <audio ref={avatarAudioRef} playsInline className="sr-only" aria-hidden="true" />
-            <video
-              ref={avatarVideoRef}
-              autoPlay
-              playsInline
-              className="h-full w-full object-cover"
-            />
+
+            {/*
+              Keep one HeyGen <video> and one camera <video> in a stable DOM order so refs never remount
+              when swapping PiP vs full screen (remounting would tear down the avatar stream).
+            */}
+            <div
+              className={
+                mainVideo === "interviewer"
+                  ? "absolute inset-0 z-0"
+                  : "absolute bottom-4 right-4 z-10 aspect-video w-[28%] min-w-40 cursor-pointer overflow-hidden rounded-xl border border-white/20 shadow-2xl"
+              }
+              onClick={mainVideo === "candidate" ? () => setMainVideo("interviewer") : undefined}
+            >
+              <video ref={avatarVideoRef} autoPlay playsInline className="h-full w-full object-cover" />
+            </div>
+
+            <div
+              className={
+                mainVideo === "candidate"
+                  ? "absolute inset-0 z-0 cursor-pointer overflow-hidden"
+                  : "absolute bottom-4 right-4 z-10 aspect-video w-[28%] min-w-40 cursor-pointer overflow-hidden rounded-xl border border-white/20 shadow-2xl"
+              }
+              onClick={() => setMainVideo(mainVideo === "candidate" ? "interviewer" : "candidate")}
+            >
+              <video ref={face.videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
+              <canvas ref={face.canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true" />
+            </div>
+
+            {mainVideo === "candidate" ? (
+              <div
+                className="absolute right-4 top-4 z-20 flex items-start gap-2"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMicMenuOpen((current) => !current);
+                      setCameraMenuOpen(false);
+                    }}
+                    className="grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+                    aria-expanded={micMenuOpen}
+                    aria-label="Choose microphone"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z" />
+                      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+                      <line x1="12" y1="19" x2="12" y2="22" />
+                      <line x1="8" y1="22" x2="16" y2="22" />
+                    </svg>
+                  </button>
+
+                  {micMenuOpen ? (
+                    <div className="absolute right-0 mt-2 w-60 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
+                      {audioDevices.length > 0 ? (
+                        audioDevices.map((device, index) => (
+                          <button
+                            key={device.deviceId || index}
+                            type="button"
+                            onClick={() => {
+                              setSelectedAudioDeviceId(device.deviceId);
+                              saveMediaDevicePreferences({
+                                audioInputId: device.deviceId,
+                                videoInputId: loadMediaDevicePreferences()?.videoInputId ?? "",
+                                mediaPermissionGranted: true
+                              });
+                              setMicMenuOpen(false);
+                            }}
+                            className={`block w-full rounded-lg px-3 py-2 text-left transition hover:bg-white/15 ${
+                              device.deviceId === selectedAudioDeviceId ? "bg-white/20 font-semibold" : ""
+                            }`}
+                          >
+                            {device.label || `Microphone ${index + 1}`}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-2 text-slate-300">No microphones found</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCameraMenuOpen((current) => !current);
+                      setMicMenuOpen(false);
+                    }}
+                    className="grid h-12 w-12 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
+                    aria-expanded={cameraMenuOpen}
+                    aria-label="Choose camera device"
+                  >
+                    <svg aria-hidden="true" viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M4 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
+                      <path d="m17 10 5-3v10l-5-3" />
+                      <path d="M7 12h6" />
+                      <path d="M10 9v6" />
+                    </svg>
+                  </button>
+
+                  {cameraMenuOpen ? (
+                    <div className="absolute right-0 mt-2 w-60 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
+                      {face.videoDevices.length > 0 ? (
+                        face.videoDevices.map((device, index) => (
+                          <button
+                            key={device.deviceId || index}
+                            type="button"
+                            onClick={() => {
+                              void face.selectCamera(index);
+                              saveMediaDevicePreferences({
+                                audioInputId: loadMediaDevicePreferences()?.audioInputId ?? "",
+                                videoInputId: device.deviceId,
+                                mediaPermissionGranted: true
+                              });
+                              setPreferredVideoDeviceId(device.deviceId);
+                              setCameraMenuOpen(false);
+                            }}
+                            className={`block w-full rounded-lg px-3 py-2 text-left transition hover:bg-white/15 ${
+                              index === face.selectedDeviceIndex ? "bg-white/20 font-semibold" : ""
+                            }`}
+                          >
+                            {device.label || `Camera ${index + 1}`}
+                          </button>
+                        ))
+                      ) : (
+                        <p className="px-3 py-2 text-slate-300">No camera devices found</p>
+                      )}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
 
             {phase === "setup" ? (
-              <div className="absolute inset-0 grid place-items-center bg-slate-950/80 px-8 text-center">
+              <div className="absolute inset-0 z-30 grid place-items-center bg-slate-950/80 px-8 text-center">
                 <div className="max-w-md space-y-4">
                   <p className="text-xs font-semibold uppercase tracking-[0.22em] text-teal-300">Live HeyGen avatar (Beta)</p>
                   <h2 className="text-2xl font-semibold text-white">Ready when you are.</h2>
@@ -901,61 +1050,12 @@ export default function LiveInterviewPage() {
               </div>
             ) : null}
 
-            <div className="absolute bottom-4 right-4 z-10 aspect-video w-[28%] min-w-40">
-              <div className="relative h-full w-full overflow-hidden rounded-xl border border-white/20 shadow-2xl">
-                <video ref={face.videoRef} autoPlay muted playsInline className="h-full w-full object-cover" />
-                <canvas ref={face.canvasRef} className="pointer-events-none absolute inset-0 h-full w-full" aria-hidden="true" />
-              </div>
-              <div className="absolute right-2 top-2 z-20">
-                <button
-                  type="button"
-                  onClick={() => setCameraMenuOpen((current) => !current)}
-                  className="grid h-9 w-9 place-items-center rounded-xl bg-black/55 text-white backdrop-blur transition hover:bg-black/70"
-                  aria-expanded={cameraMenuOpen}
-                  aria-label="Choose camera device"
-                >
-                  <svg aria-hidden="true" viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M4 7h11a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z" />
-                    <path d="m17 10 5-3v10l-5-3" />
-                    <path d="M7 12h6" />
-                    <path d="M10 9v6" />
-                  </svg>
-                </button>
-
-                {cameraMenuOpen ? (
-                  <div className="absolute bottom-11 right-0 w-60 max-w-[calc(100vw-2rem)] overflow-hidden rounded-xl border border-white/15 bg-black/75 p-1 text-sm text-white shadow-2xl backdrop-blur">
-                    {face.videoDevices.length > 0 ? (
-                      face.videoDevices.map((device, index) => (
-                        <button
-                          key={device.deviceId || index}
-                          type="button"
-                          onClick={() => {
-                            void face.selectCamera(index);
-                            saveMediaDevicePreferences({
-                              audioInputId: loadMediaDevicePreferences()?.audioInputId ?? "",
-                              videoInputId: device.deviceId,
-                              mediaPermissionGranted: true
-                            });
-                            setPreferredVideoDeviceId(device.deviceId);
-                            setCameraMenuOpen(false);
-                          }}
-                          className={`block w-full rounded-lg px-3 py-2 text-left transition hover:bg-white/15 ${
-                            index === face.selectedDeviceIndex ? "bg-white/20 font-semibold" : ""
-                          }`}
-                        >
-                          {device.label || `Camera ${index + 1}`}
-                        </button>
-                      ))
-                    ) : (
-                      <p className="px-3 py-2 text-slate-300">No camera devices found</p>
-                    )}
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
             {showOverlay && phase === "running" ? (
-              <div className="pointer-events-none absolute right-4 top-4 z-10 flex flex-col items-end gap-2">
+              <div
+                className={`pointer-events-none absolute top-4 z-[15] flex flex-col gap-2 ${
+                  mainVideo === "candidate" ? "left-4 items-start" : "right-4 items-end"
+                }`}
+              >
                 <div className="rounded-xl bg-black/60 px-3 py-2 backdrop-blur">
                   <span
                     className="text-3xl font-bold tabular-nums leading-none"
@@ -978,11 +1078,16 @@ export default function LiveInterviewPage() {
               </div>
             ) : null}
 
-            <div className="absolute bottom-5 left-5 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2">
+            <div className="absolute bottom-5 left-5 z-20 flex max-w-[calc(100%-2rem)] flex-wrap items-center gap-2">
               <div className="rounded-xl bg-black/55 px-4 py-2 text-sm font-semibold text-white backdrop-blur">
                 <span className={`mr-2 inline-block h-3 w-3 rounded-full align-middle ${phase === "running" ? "bg-teal-400" : "bg-slate-400"}`} />
                 {statusLabel}
               </div>
+              {phase === "running" ? (
+                <div className="rounded-xl bg-black/55 px-3 py-2 text-xs font-semibold text-white/90 backdrop-blur">
+                  {mainVideo === "interviewer" ? "Interviewing" : "Candidate camera"}
+                </div>
+              ) : null}
               {phase === "running" && !avatar.isSpeaking ? (
                 micPausedByUser ? (
                   <button
