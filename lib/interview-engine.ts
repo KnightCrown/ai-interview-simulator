@@ -32,6 +32,7 @@ import {
   updateMemory
 } from "@/lib/interview-scoring";
 import { getRoleExpectations } from "@/lib/sample-data";
+import { hasSubstantiveLiveConversationTranscript } from "@/lib/live-interview-finalize";
 import { isTranscriptSubstantive } from "@/lib/transcript-utils";
 
 /**
@@ -343,13 +344,21 @@ export function hasSubstantiveAnswers(session: InterviewSession): boolean {
   return session.turns.some((turn) => isTranscriptSubstantive(turn.transcript));
 }
 
+/** True if structured turns or the live HeyGen transcript contain enough candidate speech to score. */
+export function hasSubstantiveInterviewContent(session: InterviewSession): boolean {
+  return (
+    hasSubstantiveAnswers(session) ||
+    hasSubstantiveLiveConversationTranscript(session.liveConversationTranscript)
+  );
+}
+
 export function buildFallbackFinalReport(session: InterviewSession): FinalReport {
   const turns = session.turns;
 
   // No substantive answers (either zero turns, or all turns were silent / empty).
   // Return an honest "no feedback yet" report rather than fabricating positive
   // strengths or generic weaknesses for a candidate who never actually spoke.
-  if (!hasSubstantiveAnswers(session)) {
+  if (!hasSubstantiveInterviewContent(session)) {
     return {
       overallScore: 0,
       clarity: 0,
@@ -885,9 +894,20 @@ export async function finalizeInterview(session: InterviewSession) {
   // If no substantive answers were captured, skip the LLM entirely. Otherwise it
   // will hallucinate generic strengths / weaknesses (e.g. "clear ownership",
   // "structured response") for a candidate who never actually spoke.
-  if (!hasSubstantiveAnswers(session)) {
+  if (!hasSubstantiveInterviewContent(session)) {
     return fallback;
   }
+
+  const liveTranscript = session.liveConversationTranscript?.trim();
+  const { liveConversationTranscript: _omit, ...sessionForPrompt } = session;
+
+  const liveTranscriptSection = liveTranscript
+    ? `
+
+--- Full live avatar conversation (chronological; use together with structured turns) ---
+${liveTranscript}
+---`
+    : "";
 
   const openAiResponse = await generateWithOpenAI(
     `
@@ -903,8 +923,9 @@ Key requirements:
 - weaknesses: string[] — short labels for what to improve (e.g. "Vague impact claims").
 - weaknessDescriptions: string[] — one sentence per weakness explaining the concrete impact it had and why fixing it matters (parallel array, same length as weaknesses).
 - Each description should be specific to the candidate's actual answers, not generic filler.
+- When a live conversation transcript is included, ground feedback in both the structured session.turns and the transcript so partially scored or early-ended sessions still get accurate notes.
 
-Session: ${JSON.stringify(session)}
+Session (structured turns and metadata): ${JSON.stringify(sessionForPrompt)}${liveTranscriptSection}
 `,
     "finalizeInterview"
   );

@@ -3,6 +3,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { FinalReport, FunnelOutcome } from "@/lib/interview-types";
+import {
+  parseLiveConversationTranscript,
+  segmentLiveTranscriptByMainQuestion,
+  type LiveTranscriptMessage
+} from "@/lib/live-interview-finalize";
 import { useInterviewSession } from "@/lib/session-store";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { TechSpecsButton } from "@/components/tech-specs-button";
@@ -225,6 +230,41 @@ function ListItem({ item, description, tone }: { item: string; description: stri
   );
 }
 
+function LiveTimelineMessageList({ messages }: { messages: LiveTranscriptMessage[] }) {
+  if (messages.length === 0) {
+    return (
+      <p className="text-sm leading-7 text-slate-500 dark:text-slate-400">No transcript for this question.</p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {messages.map((msg, index) => (
+        <article
+          key={index}
+          className={`rounded-3xl border px-5 py-4 ${
+            msg.role === "interviewer"
+              ? "border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/70"
+              : "border-teal-200/80 bg-teal-50/90 dark:border-teal-800/50 dark:bg-teal-900/25"
+          }`}
+        >
+          <div className="flex flex-wrap items-baseline gap-2">
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">
+              {msg.role === "interviewer" ? "Interviewer" : "You"}
+            </p>
+            {msg.role === "interviewer" && msg.classification ? (
+              <span className="rounded-full bg-white/80 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-900/80 dark:text-slate-400">
+                {msg.classification.replace(/_/g, " ")}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-7 text-slate-700 dark:text-slate-200">{msg.text}</p>
+        </article>
+      ))}
+    </div>
+  );
+}
+
 export default function ResultsPage() {
   const router = useRouter();
   const { session, resetSession } = useInterviewSession();
@@ -235,6 +275,7 @@ export default function ResultsPage() {
   const infoPanelRef = useRef<HTMLDivElement | null>(null);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [loadingMessageIndex, setLoadingMessageIndex] = useState(0);
+  const [liveTimelineQuestionIdx, setLiveTimelineQuestionIdx] = useState(0);
 
   useEffect(() => {
     if (!session) {
@@ -305,6 +346,22 @@ export default function ResultsPage() {
   }, [isLoading, LOADING_MESSAGES.length]);
 
   const interviewerNotes = useMemo(() => report?.interviewerNotes.join(" ") ?? "", [report]);
+
+  const liveTranscriptMessages = useMemo(
+    () => parseLiveConversationTranscript(session?.liveConversationTranscript),
+    [session?.liveConversationTranscript]
+  );
+
+  const liveQuestionSegments = useMemo(
+    () => segmentLiveTranscriptByMainQuestion(liveTranscriptMessages),
+    [liveTranscriptMessages]
+  );
+
+  const useLiveAnswerTimelineTabs = Boolean(session?.liveConversationTranscript?.trim());
+
+  useEffect(() => {
+    setLiveTimelineQuestionIdx(0);
+  }, [session?.id]);
 
   if (!session) {
     return null;
@@ -560,11 +617,44 @@ export default function ResultsPage() {
               {/* Answer timeline tab */}
               {activeTab === "timeline" ? (
                 <div className="p-6 sm:p-7">
-                  {session.turns.length === 0 ? (
-                    <p className="text-sm leading-7 text-slate-500 dark:text-slate-400">
-                      No answers were recorded in this session.
-                    </p>
-                  ) : (
+                  {useLiveAnswerTimelineTabs ? (
+                    <div className="space-y-4">
+                      <p className="text-sm leading-7 text-slate-600 dark:text-slate-400">
+                        Live session transcript by main question (includes greetings, follow-ups, and wrap-up where recorded).
+                      </p>
+                      <div className="flex overflow-x-auto border-b border-slate-200 dark:border-slate-700">
+                        {([0, 1, 2] as const).map((qi) => (
+                          <button
+                            key={qi}
+                            type="button"
+                            onClick={() => setLiveTimelineQuestionIdx(qi)}
+                            className={`flex-1 whitespace-nowrap px-3 py-3 text-sm font-semibold transition-colors sm:px-4 ${
+                              liveTimelineQuestionIdx === qi
+                                ? "border-b-2 border-teal-600 text-teal-700 dark:border-teal-400 dark:text-teal-300"
+                                : "text-slate-500 hover:text-ink dark:text-slate-400 dark:hover:text-white"
+                            }`}
+                          >
+                            Question {qi + 1}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="mt-6 space-y-6">
+                        <LiveTimelineMessageList messages={liveQuestionSegments[liveTimelineQuestionIdx]} />
+                        {session.turns[liveTimelineQuestionIdx] ? (
+                          <article className="rounded-3xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/70">
+                            <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-500 dark:text-slate-400">Scored summary</p>
+                            <p className="mt-2 font-semibold text-ink dark:text-white">{session.turns[liveTimelineQuestionIdx].question}</p>
+                            <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">Answer</p>
+                            <p className="mt-2 text-sm leading-7 text-slate-700 dark:text-slate-300">{session.turns[liveTimelineQuestionIdx].transcript}</p>
+                            <p className="mt-4 text-sm font-semibold text-slate-500 dark:text-slate-400">Interviewer&apos;s thoughts</p>
+                            <p className="mt-2 rounded-2xl bg-white px-4 py-3 text-sm leading-7 text-teal-900 dark:bg-slate-900 dark:text-teal-200">
+                              {session.turns[liveTimelineQuestionIdx].evaluation.interviewerReaction}
+                            </p>
+                          </article>
+                        ) : null}
+                      </div>
+                    </div>
+                  ) : session.turns.length > 0 ? (
                     <div className="space-y-4">
                       {session.turns.map((turn, index) => (
                         <article key={turn.id} className="rounded-3xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-700 dark:bg-slate-800/70">
@@ -577,6 +667,17 @@ export default function ResultsPage() {
                         </article>
                       ))}
                     </div>
+                  ) : liveTranscriptMessages.length > 0 ? (
+                    <div className="space-y-4">
+                      <p className="text-sm leading-7 text-slate-600 dark:text-slate-400">
+                        Conversation from your live session, including follow-ups before a main question was scored.
+                      </p>
+                      <LiveTimelineMessageList messages={liveTranscriptMessages} />
+                    </div>
+                  ) : (
+                    <p className="text-sm leading-7 text-slate-500 dark:text-slate-400">
+                      No answers were recorded in this session.
+                    </p>
                   )}
                 </div>
               ) : null}

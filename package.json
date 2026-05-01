@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "livekit-client": "2.11.3",
     "@mediapipe/camera_utils": "0.3.1675466862",
     "@mediapipe/face_mesh": "0.4.1633559619",
     "@react-three/drei": "^9.122.0",
