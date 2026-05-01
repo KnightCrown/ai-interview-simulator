@@ -1107,123 +1107,124 @@ export default function LandingPage() {
               <fieldset className="space-y-3">
                 <legend className="text-sm font-medium text-slate-700 dark:text-slate-300">Resume (optional)</legend>
 
-                <div
-                  role="radio"
-                  aria-checked={resumeMode === "Use Sample Resume"}
-                  tabIndex={0}
-                  onClick={() => {
-                    setResumeMode("Use Sample Resume");
-                    setStartError(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
+                <div className="grid gap-3 sm:grid-cols-2 sm:items-stretch">
+                  <div
+                    role="radio"
+                    aria-checked={resumeMode === "Use Sample Resume"}
+                    tabIndex={0}
+                    onClick={() => {
                       setResumeMode("Use Sample Resume");
                       setStartError(null);
-                    }
-                  }}
-                  className={`relative w-full cursor-pointer rounded-2xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
-                    resumeMode === "Use Sample Resume"
-                      ? "border-teal-500 bg-teal-50/80 ring-1 ring-teal-500/30 dark:border-teal-400 dark:bg-teal-900/25"
-                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
-                  }`}
-                >
-                  <span
-                    className={`absolute left-3 top-4 grid h-5 w-5 place-items-center rounded-full border-2 ${
-                      resumeMode === "Use Sample Resume"
-                        ? "border-teal-600 bg-teal-600 dark:border-teal-400 dark:bg-teal-400"
-                        : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
-                    }`}
-                    aria-hidden="true"
-                  >
-                    {resumeMode === "Use Sample Resume" ? <span className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" /> : null}
-                  </span>
-                  <div className="flex flex-wrap items-start justify-between gap-3 pl-8">
-                    <div className="flex min-w-0 flex-1 items-start gap-2">
-                      <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <polyline points="14 2 14 8 20 8" />
-                        </svg>
-                      </span>
-                      <div>
-                        <span className="font-semibold text-ink dark:text-white">Upload resume</span>
-                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                          Personalise feedback and questions based on your resume.
-                        </p>
-                      </div>
-                    </div>
-                    <span className="rounded-full bg-teal-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:bg-teal-900/50 dark:text-teal-200">
-                      Recommended
-                    </span>
-                  </div>
-                  <label className="mt-4 block cursor-pointer rounded-2xl border border-dashed border-slate-300 bg-white/80 px-4 py-8 text-center dark:border-slate-600 dark:bg-slate-900/40">
-                    <input
-                      type="file"
-                      accept=".pdf,.doc,.docx,.txt"
-                      className="sr-only"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0];
-                        setUploadedResumeName(file?.name ?? "");
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
                         setResumeMode("Use Sample Resume");
                         setStartError(null);
-                      }}
-                    />
-                    <span className="text-sm font-semibold text-teal-700 dark:text-teal-300">
-                      {uploadedResumeName ? uploadedResumeName : "Upload your resume"}
+                      }
+                    }}
+                    className={`relative flex h-full min-h-0 cursor-pointer flex-col rounded-2xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-teal-500 ${
+                      resumeMode === "Use Sample Resume"
+                        ? "border-teal-500 bg-teal-50/80 ring-1 ring-teal-500/30 dark:border-teal-400 dark:bg-teal-900/25"
+                        : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
+                    }`}
+                  >
+                    <span
+                      className={`absolute left-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 ${
+                        resumeMode === "Use Sample Resume"
+                          ? "border-teal-600 bg-teal-600 dark:border-teal-400 dark:bg-teal-400"
+                          : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {resumeMode === "Use Sample Resume" ? <span className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" /> : null}
                     </span>
-                    <span className="mt-1 block text-xs text-slate-500 dark:text-slate-400">
-                      PDF, DOCX, or TXT · max 10 MB
-                    </span>
-                  </label>
-                </div>
+                    <div className="flex min-w-0 flex-col gap-2 pl-7 pt-0.5">
+                      <div className="flex items-start justify-between gap-3">
+                        <span className="min-w-0 font-semibold text-ink dark:text-white">Upload resume</span>
+                        <span className="shrink-0 rounded-full bg-teal-100 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide text-teal-700 dark:bg-teal-900/50 dark:text-teal-200">
+                          Recommended
+                        </span>
+                      </div>
+                      <p className="w-full text-sm leading-snug text-slate-500 dark:text-slate-400">
+                        Personalise feedback and questions based on your resume.
+                      </p>
+                    </div>
+                    <label className="mt-3 block cursor-pointer rounded-xl border border-dashed border-slate-300 bg-white/80 px-3 py-3 text-center dark:border-slate-600 dark:bg-slate-900/40">
+                      <input
+                        type="file"
+                        accept=".pdf,.doc,.docx,.txt"
+                        className="sr-only"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          setUploadedResumeName(file?.name ?? "");
+                          setResumeMode("Use Sample Resume");
+                          setStartError(null);
+                        }}
+                      />
+                      <span
+                        className="block truncate text-sm font-semibold text-teal-700 dark:text-teal-300"
+                        title={uploadedResumeName || undefined}
+                      >
+                        {uploadedResumeName ? uploadedResumeName : "Upload your resume"}
+                      </span>
+                      <span className="mt-0.5 block text-[11px] leading-snug text-slate-500 dark:text-slate-400">
+                        PDF, DOCX, or TXT · max 10 MB
+                      </span>
+                    </label>
+                  </div>
 
-                <div
-                  role="radio"
-                  aria-checked={resumeMode === "Skip Resume"}
-                  tabIndex={0}
-                  onClick={() => {
-                    setResumeMode("Skip Resume");
-                    setUploadedResumeName("");
-                    setStartError(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
+                  <div
+                    role="radio"
+                    aria-checked={resumeMode === "Skip Resume"}
+                    tabIndex={0}
+                    onClick={() => {
                       setResumeMode("Skip Resume");
                       setUploadedResumeName("");
                       setStartError(null);
-                    }
-                  }}
-                  className={`relative flex w-full cursor-pointer gap-3 rounded-2xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
-                    resumeMode === "Skip Resume"
-                      ? "border-slate-500 bg-slate-50 ring-1 ring-slate-400/40 dark:border-slate-500 dark:bg-slate-800/80"
-                      : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
-                  }`}
-                >
-                  <span
-                    className={`mt-0.5 grid h-5 w-5 shrink-0 place-items-center rounded-full border-2 ${
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        setResumeMode("Skip Resume");
+                        setUploadedResumeName("");
+                        setStartError(null);
+                      }
+                    }}
+                    className={`relative flex h-full min-h-0 cursor-pointer flex-col rounded-2xl border p-4 text-left transition focus:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 ${
                       resumeMode === "Skip Resume"
-                        ? "border-slate-700 bg-slate-700 dark:border-slate-300 dark:bg-slate-300"
-                        : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
+                        ? "border-slate-500 bg-slate-50 ring-1 ring-slate-400/40 dark:border-slate-500 dark:bg-slate-800/80"
+                        : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600"
                     }`}
-                    aria-hidden="true"
                   >
-                    {resumeMode === "Skip Resume" ? <span className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" /> : null}
-                  </span>
-                  <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <line x1="12" y1="18" x2="12" y2="12" />
-                      <line x1="9" y1="15" x2="15" y2="15" />
-                    </svg>
-                  </span>
-                  <span className="min-w-0">
-                    <span className="font-semibold text-ink dark:text-white">Skip resume</span>
-                    <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
-                      Run the interview without resume context.
+                    <span
+                      className={`absolute left-3 top-3 grid h-5 w-5 place-items-center rounded-full border-2 ${
+                        resumeMode === "Skip Resume"
+                          ? "border-slate-700 bg-slate-700 dark:border-slate-300 dark:bg-slate-300"
+                          : "border-slate-300 bg-white dark:border-slate-600 dark:bg-slate-800"
+                      }`}
+                      aria-hidden="true"
+                    >
+                      {resumeMode === "Skip Resume" ? <span className="h-2 w-2 rounded-full bg-white dark:bg-slate-900" /> : null}
                     </span>
-                  </span>
+                    <div className="flex flex-1 flex-col justify-center gap-3 pl-7 pt-0.5">
+                      <div className="flex gap-3">
+                        <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <line x1="12" y1="18" x2="12" y2="12" />
+                            <line x1="9" y1="15" x2="15" y2="15" />
+                          </svg>
+                        </span>
+                        <span className="min-w-0">
+                          <span className="font-semibold text-ink dark:text-white">Skip resume</span>
+                          <span className="mt-1 block text-sm leading-snug text-slate-500 dark:text-slate-400">
+                            Run the interview without resume context.
+                          </span>
+                        </span>
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </fieldset>
 

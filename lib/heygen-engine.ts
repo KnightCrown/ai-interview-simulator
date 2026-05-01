@@ -52,7 +52,7 @@ export function getLiveAnswerSecondsBudget(mainQuestionsAsked: number): number |
  * we advance to the next main question (or wrap-up at cap) even if the model
  * still wants another follow-up — avoids endless probing on vague answers.
  */
-export const MAX_FOLLOW_UPS_BEFORE_ADVANCE = 2;
+export const MAX_FOLLOW_UPS_BEFORE_ADVANCE = 1;
 
 /** Count avatar lines classified `follow_up` since the latest `next_main_question`. */
 export function countFollowUpAvatarTurnsSinceLastMainQuestion(log: ConversationLogEntry[]): number {

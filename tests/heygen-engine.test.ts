@@ -3,7 +3,6 @@ import {
   LIVE_MAIN_QUESTION_1_SECONDS,
   LIVE_MAIN_QUESTION_2_SECONDS,
   MAIN_QUESTION_CAP,
-  MAX_FOLLOW_UPS_BEFORE_ADVANCE,
   buildOrchestratorPrompt,
   countFollowUpAvatarTurnsSinceLastMainQuestion,
   decideNextUtterance,
@@ -215,7 +214,6 @@ describe("countFollowUpAvatarTurnsSinceLastMainQuestion", () => {
       { role: "avatar", text: "fu2", timestamp: 5, classification: "follow_up" }
     ];
     expect(countFollowUpAvatarTurnsSinceLastMainQuestion(log)).toBe(2);
-    expect(MAX_FOLLOW_UPS_BEFORE_ADVANCE).toBe(2);
   });
 
   it("resets count after a newer next_main_question", () => {
@@ -356,15 +354,13 @@ describe("runConversationTurn", () => {
     expect(decision.replyText.length).toBeGreaterThan(0);
   });
 
-  it("after two follow-ups on the same main question, forces next_main_question with a move-on acknowledgement", async () => {
+  it("after one follow-up on the same main question, forces next_main_question with a move-on acknowledgement", async () => {
     const session = freshSession();
     const conversationLog: ConversationLogEntry[] = [
       { role: "avatar", text: "Walk me through a project.", timestamp: 1, classification: "next_main_question" },
       { role: "user", text: "yeah", timestamp: 2 },
       { role: "avatar", text: "Can you give an example?", timestamp: 3, classification: "follow_up" },
-      { role: "user", text: "sort of", timestamp: 4 },
-      { role: "avatar", text: "What was the outcome?", timestamp: 5, classification: "follow_up" },
-      { role: "user", text: "not really sure", timestamp: 6 }
+      { role: "user", text: "not really sure", timestamp: 4 }
     ];
 
     const llmAlwaysFollowUp = vi.fn(async () =>
@@ -384,7 +380,7 @@ describe("runConversationTurn", () => {
       mainQuestionsAsked: 1,
       currentMainQuestion: "Walk me through a project.",
       isStart: false,
-      cumulativeAnswerTranscript: "yeah sort of not really sure",
+      cumulativeAnswerTranscript: "yeah not really sure",
       durationSeconds: 12,
       speechMetrics: SAMPLE_SPEECH,
       faceMetrics: SAMPLE_FACE,
@@ -401,15 +397,13 @@ describe("runConversationTurn", () => {
     expect(decision.shouldEndInterview).toBe(false);
   });
 
-  it("after two follow-ups at the main-question cap, forces wrap_up", async () => {
+  it("after one follow-up at the main-question cap, forces wrap_up", async () => {
     const session = freshSession();
     const conversationLog: ConversationLogEntry[] = [
       { role: "avatar", text: "Why should we hire you?", timestamp: 1, classification: "next_main_question" },
       { role: "user", text: "idk", timestamp: 2 },
       { role: "avatar", text: "Probe one?", timestamp: 3, classification: "follow_up" },
-      { role: "user", text: "maybe", timestamp: 4 },
-      { role: "avatar", text: "Probe two?", timestamp: 5, classification: "follow_up" },
-      { role: "user", text: "still vague", timestamp: 6 }
+      { role: "user", text: "still vague", timestamp: 4 }
     ];
 
     const decision = await runConversationTurn({
@@ -419,7 +413,7 @@ describe("runConversationTurn", () => {
       mainQuestionsAsked: MAIN_QUESTION_CAP,
       currentMainQuestion: "Why should we hire you?",
       isStart: false,
-      cumulativeAnswerTranscript: "idk maybe still vague",
+      cumulativeAnswerTranscript: "idk still vague",
       durationSeconds: 10,
       speechMetrics: SAMPLE_SPEECH,
       faceMetrics: SAMPLE_FACE,
