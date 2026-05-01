@@ -1,0 +1,445 @@
+import OpenAI from "openai";
+import {
+  AnswerEvaluation,
+  CandidateMoodSnapshot,
+  FaceMetrics,
+  InterviewSession,
+  InterviewTurn,
+  SpeechMetrics
+} from "@/lib/interview-types";
+import {
+  applyTurnToSession,
+  evaluateAnswer,
+  generateQuestion
+} from "@/lib/interview-engine";
+import {
+  ConversationClassification,
+  ConversationDecision,
+  ConversationLogEntry
+} from "@/lib/heygen-types";
+import { isTranscriptSubstantive } from "@/lib/transcript-utils";
+
+/**
+ * Soft cap on the number of MAIN questions the live avatar will ask before
+ * wrapping up and routing to /results. The user picked 3 in the planning step.
+ *
+ * Greeting and follow-up utterances do NOT count toward this cap. Only utterances
+ * the orchestrator classifies as `next_main_question` increment the counter.
+ */
+export const MAIN_QUESTION_CAP = 3;
+
+/**
+ * Result returned by `decideNextUtterance`. The orchestrator route (or test
+ * harness) is responsible for turning this decision into a `ConversationDecision`
+ * by running `evaluateAnswer` and `generateQuestion` when needed.
+ */
+export interface OrchestratorDecisionRaw {
+  isQuestionComplete: boolean;
+  classification: ConversationClassification;
+  /**
+   * A brief acknowledgement / transition phrase the avatar can say before the
+   * next main question (when classification is `next_main_question` or
+   * `wrap_up`). Empty when the LLM omitted it.
+   */
+  transitionPhrase: string;
+  /**
+   * The actual follow-up question text. Only meaningful when classification
+   * is `follow_up`. Empty otherwise.
+   */
+  followUpText: string;
+  /**
+   * Free-form wrap-up sentence. Only meaningful when classification is
+   * `wrap_up`. Empty otherwise.
+   */
+  wrapUpText: string;
+}
+
+export type LLMRunner = (prompt: string, label: string) => Promise<string | null>;
+
+let missingOpenAiKeyLogged = false;
+
+function defaultClient(): OpenAI | null {
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
+    if (process.env.NODE_ENV === "development" && !missingOpenAiKeyLogged) {
+      missingOpenAiKeyLogged = true;
+      console.warn(
+        "[heygen-engine] OPENAI_API_KEY missing — orchestrator falls back to deterministic decisions. Add OPENAI_API_KEY to .env.local."
+      );
+    }
+    return null;
+  }
+  return new OpenAI({ apiKey });
+}
+
+const defaultRunLLM: LLMRunner = async (prompt, label) => {
+  const client = defaultClient();
+  if (!client) return null;
+
+  const isDev = process.env.NODE_ENV !== "production";
+  const startedAt = isDev ? performance.now() : 0;
+  try {
+    const response = await client.responses.create({
+      model: "gpt-4.1-mini",
+      input: prompt
+    });
+    if (isDev) {
+      console.log(`[openai] ${label} ms=${Math.round(performance.now() - startedAt)}`);
+    }
+    const text = response.output_text?.trim();
+    return text || null;
+  } catch (err) {
+    console.error("[heygen-engine] OpenAI request failed:", err instanceof Error ? err.message : err);
+    return null;
+  }
+};
+
+function parseJsonObject<T>(content: string): Partial<T> | null {
+  const trimmed = content.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced?.[1] ?? trimmed;
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    return JSON.parse(candidate.slice(start, end + 1)) as Partial<T>;
+  } catch {
+    return null;
+  }
+}
+
+function asString(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function asClassification(
+  value: unknown,
+  fallback: ConversationClassification
+): ConversationClassification {
+  if (value === "follow_up" || value === "next_main_question" || value === "wrap_up" || value === "greeting") {
+    return value;
+  }
+  return fallback;
+}
+
+/**
+ * Pure helper: render the orchestrator prompt. Exported for tests so we can
+ * pin the prompt shape and assert on input fields without re-running the LLM.
+ */
+export function buildOrchestratorPrompt(input: {
+  session: InterviewSession;
+  conversationLog: ConversationLogEntry[];
+  latestUserUtterance: string;
+  currentMainQuestion: string | null;
+  mainQuestionsAsked: number;
+  cumulativeAnswerTranscript: string;
+}): string {
+  const remainingMain = Math.max(0, MAIN_QUESTION_CAP - input.mainQuestionsAsked);
+  const isLastMainQuestion = input.mainQuestionsAsked >= MAIN_QUESTION_CAP;
+  const recentLog = input.conversationLog.slice(-12);
+
+  return `
+You are the brain of a live AI interviewer rendered as a HeyGen avatar.
+You decide what the avatar says next, turn-by-turn, and whether the candidate has fully answered the CURRENT MAIN QUESTION.
+
+Return STRICT JSON with these exact keys (no markdown fences, no commentary):
+{
+  "isQuestionComplete": boolean,
+  "classification": "follow_up" | "next_main_question" | "wrap_up",
+  "transitionPhrase": string,
+  "followUpText": string,
+  "wrapUpText": string
+}
+
+Field rules:
+- isQuestionComplete: true ONLY when the candidate's cumulative answer to the current main question is genuinely complete (covers a concrete example, role-relevant detail, and at least one piece of evidence/impact). For thin answers ("yeah", short fragments, off-topic asides), set false and ask a focused follow-up.
+- classification:
+  * "follow_up" when isQuestionComplete is false: ask one short probing question that builds on what the candidate just said.
+  * "next_main_question" when isQuestionComplete is true AND we still have main questions remaining (remaining=${remainingMain}).
+  * "wrap_up" when isQuestionComplete is true AND ${isLastMainQuestion ? "we are AT the cap and must close out the interview" : "the candidate clearly cannot continue"}. Only choose wrap_up when remaining is 0 OR the candidate has explicitly indicated they want to end.
+- transitionPhrase: 1 short sentence (max 12 words) the avatar says BEFORE the next question — only meaningful for "next_main_question" or "wrap_up". A real interviewer's quick acknowledgement: "Got it.", "Thanks — that's helpful.", "Makes sense.". Empty string for "follow_up".
+- followUpText: a single 1-2 sentence probing question. Only meaningful for "follow_up". Empty string otherwise. Speak in first person, present tense. Do NOT greet, do NOT thank, do NOT introduce yourself.
+- wrapUpText: a single 1-2 sentence closing line. Only meaningful for "wrap_up". Polite, professional, signals the interview is ending. Empty string otherwise.
+
+Behave like a human interviewer:
+- Keep replies short (under ~30 words). The avatar speaks them aloud.
+- Never reveal you are an AI or mention HeyGen / OpenAI.
+- React specifically to what the candidate just said when probing follow-ups.
+- If the candidate is rambling or off-topic, redirect them gently.
+- Difficulty calibration: ${input.session.difficulty}. Easy = supportive coach. Medium = realistic peer. Hard = skeptical senior.
+
+Context:
+- Role: ${JSON.stringify(input.session.role)}
+- Difficulty: ${input.session.difficulty}
+- Resume: ${JSON.stringify(input.session.resume)}
+- Memory: ${JSON.stringify(input.session.memory)}
+- Main questions already asked: ${input.mainQuestionsAsked} of ${MAIN_QUESTION_CAP}
+- Current main question in flight: ${JSON.stringify(input.currentMainQuestion ?? "")}
+- Cumulative answer transcript so far for this main question: ${JSON.stringify(input.cumulativeAnswerTranscript)}
+- Latest user utterance (most recent only): ${JSON.stringify(input.latestUserUtterance)}
+- Recent conversation log (oldest first): ${JSON.stringify(recentLog)}
+`;
+}
+
+function fallbackDecision(input: {
+  cumulativeAnswerTranscript: string;
+  latestUserUtterance: string;
+  mainQuestionsAsked: number;
+}): OrchestratorDecisionRaw {
+  const text = `${input.cumulativeAnswerTranscript} ${input.latestUserUtterance}`.trim();
+  const wordCount = text.split(/\s+/).filter(Boolean).length;
+  const substantive = isTranscriptSubstantive(text) && wordCount >= 30;
+  const atCap = input.mainQuestionsAsked >= MAIN_QUESTION_CAP;
+
+  if (substantive && atCap) {
+    return {
+      isQuestionComplete: true,
+      classification: "wrap_up",
+      transitionPhrase: "Thanks — that wraps things up on my end.",
+      followUpText: "",
+      wrapUpText: "I appreciate you taking the time today. We'll review and follow up with feedback shortly."
+    };
+  }
+  if (substantive) {
+    return {
+      isQuestionComplete: true,
+      classification: "next_main_question",
+      transitionPhrase: "Thanks — that's helpful.",
+      followUpText: "",
+      wrapUpText: ""
+    };
+  }
+  return {
+    isQuestionComplete: false,
+    classification: "follow_up",
+    transitionPhrase: "",
+    followUpText: wordCount === 0
+      ? "Take your time — could you walk me through a specific example from your work?"
+      : "Could you give me a concrete example with the actual outcome you drove?",
+    wrapUpText: ""
+  };
+}
+
+/**
+ * Pure decision logic: take the conversation state and return the
+ * orchestrator's raw decision. Falls back to deterministic heuristics when no
+ * OpenAI key is configured or the LLM call fails. Exported so tests can pin
+ * its behavior.
+ */
+export async function decideNextUtterance(
+  input: {
+    session: InterviewSession;
+    conversationLog: ConversationLogEntry[];
+    latestUserUtterance: string;
+    mainQuestionsAsked: number;
+    currentMainQuestion: string | null;
+    cumulativeAnswerTranscript: string;
+  },
+  runLLM: LLMRunner = defaultRunLLM
+): Promise<OrchestratorDecisionRaw> {
+  const fallback = fallbackDecision({
+    cumulativeAnswerTranscript: input.cumulativeAnswerTranscript,
+    latestUserUtterance: input.latestUserUtterance,
+    mainQuestionsAsked: input.mainQuestionsAsked
+  });
+
+  const prompt = buildOrchestratorPrompt(input);
+  const raw = await runLLM(prompt, "decideNextUtterance");
+  if (!raw) return fallback;
+
+  const parsed = parseJsonObject<OrchestratorDecisionRaw>(raw);
+  if (!parsed) return fallback;
+
+  const classification = asClassification(parsed.classification, fallback.classification);
+
+  // Defense-in-depth: never let the LLM produce wrap_up when we still have main
+  // questions to ask, and never produce next_main_question when we're at the cap.
+  let normalizedClassification: ConversationClassification = classification;
+  if (normalizedClassification === "wrap_up" && input.mainQuestionsAsked < MAIN_QUESTION_CAP) {
+    normalizedClassification = "next_main_question";
+  }
+  if (normalizedClassification === "next_main_question" && input.mainQuestionsAsked >= MAIN_QUESTION_CAP) {
+    normalizedClassification = "wrap_up";
+  }
+
+  // The classification tautologically determines isQuestionComplete: follow_up
+  // means the answer isn't done yet; the other two branches always close out
+  // the current main question.
+  const isQuestionComplete = normalizedClassification !== "follow_up";
+
+  return {
+    isQuestionComplete,
+    classification: normalizedClassification,
+    transitionPhrase: asString(parsed.transitionPhrase, ""),
+    followUpText: asString(parsed.followUpText, fallback.followUpText),
+    wrapUpText: asString(parsed.wrapUpText, fallback.wrapUpText)
+  };
+}
+
+/**
+ * Pure helper: build the InterviewTurn record we materialize when the
+ * orchestrator declares a main question complete. The transcript is the
+ * cumulative-answer text aggregated across all candidate utterances since the
+ * main question was asked.
+ */
+export function buildCompletedTurn(input: {
+  question: string;
+  transcript: string;
+  durationSeconds: number;
+  speechMetrics: SpeechMetrics;
+  faceMetrics: FaceMetrics;
+  candidateMood: CandidateMoodSnapshot | null;
+  evaluation: AnswerEvaluation;
+}): InterviewTurn {
+  return {
+    id: crypto.randomUUID(),
+    question: input.question || "Live conversation question",
+    transcript: input.transcript,
+    durationSeconds: input.durationSeconds,
+    speechMetrics: input.speechMetrics,
+    faceMetrics: input.faceMetrics,
+    candidateMood: input.candidateMood ?? undefined,
+    evaluation: input.evaluation
+  };
+}
+
+/**
+ * Compose `evaluateAnswer` + `applyTurnToSession` for the live route. Returns
+ * the updated session AND the evaluation so the API route can include both in
+ * its response (the page needs the evaluation for the coaching panel).
+ */
+export async function scoreCompletedMainQuestion(input: {
+  session: InterviewSession;
+  question: string;
+  transcript: string;
+  durationSeconds: number;
+  speechMetrics: SpeechMetrics;
+  faceMetrics: FaceMetrics;
+  candidateMood: CandidateMoodSnapshot | null;
+}): Promise<{ session: InterviewSession; evaluation: AnswerEvaluation; turn: InterviewTurn }> {
+  const evaluation = await evaluateAnswer({
+    role: input.session.role,
+    difficulty: input.session.difficulty,
+    transcript: input.transcript,
+    speechMetrics: input.speechMetrics,
+    faceMetrics: input.faceMetrics,
+    candidateMood: input.candidateMood,
+    resume: input.session.resume,
+    previousTurns: input.session.turns,
+    memory: input.session.memory
+  });
+
+  const turn = buildCompletedTurn({
+    question: input.question,
+    transcript: input.transcript,
+    durationSeconds: input.durationSeconds,
+    speechMetrics: input.speechMetrics,
+    faceMetrics: input.faceMetrics,
+    candidateMood: input.candidateMood,
+    evaluation
+  });
+
+  const nextSession = applyTurnToSession(input.session, turn);
+  return { session: nextSession, evaluation, turn };
+}
+
+/**
+ * High-level orchestrator entry point used by /api/heygen/conversation. Returns
+ * the avatar's next utterance + (when the main question is complete) the
+ * evaluation and updated session.
+ *
+ * On `isStart=true`, skips the decision LLM and just generates the first main
+ * question via the existing `generateQuestion` helper.
+ */
+export async function runConversationTurn(input: {
+  session: InterviewSession;
+  conversationLog: ConversationLogEntry[];
+  latestUserUtterance: string;
+  mainQuestionsAsked: number;
+  currentMainQuestion: string | null;
+  isStart: boolean;
+  cumulativeAnswerTranscript: string;
+  durationSeconds: number;
+  speechMetrics: SpeechMetrics;
+  faceMetrics: FaceMetrics;
+  candidateMood: CandidateMoodSnapshot | null;
+  runLLM?: LLMRunner;
+}): Promise<ConversationDecision> {
+  if (input.isStart) {
+    const greeting = `Hello, I'll be your interviewer today. Let's get started.`;
+    const firstQuestion = await generateQuestion({
+      session: input.session,
+      targetTurnIndex: 0,
+      slotKind: { kind: "new" }
+    });
+    return {
+      replyText: `${greeting} ${firstQuestion}`.trim(),
+      classification: "next_main_question",
+      isQuestionComplete: false,
+      shouldEndInterview: false
+    };
+  }
+
+  const decision = await decideNextUtterance(
+    {
+      session: input.session,
+      conversationLog: input.conversationLog,
+      latestUserUtterance: input.latestUserUtterance,
+      mainQuestionsAsked: input.mainQuestionsAsked,
+      currentMainQuestion: input.currentMainQuestion,
+      cumulativeAnswerTranscript: input.cumulativeAnswerTranscript
+    },
+    input.runLLM
+  );
+
+  if (decision.classification === "follow_up") {
+    return {
+      replyText: decision.followUpText || "Could you give me a concrete example with the outcome you drove?",
+      classification: "follow_up",
+      isQuestionComplete: false,
+      shouldEndInterview: false
+    };
+  }
+
+  // Either next_main_question or wrap_up: score the just-finished main question.
+  const { session: scoredSession, evaluation } = await scoreCompletedMainQuestion({
+    session: input.session,
+    question: input.currentMainQuestion ?? "",
+    transcript: input.cumulativeAnswerTranscript,
+    durationSeconds: input.durationSeconds,
+    speechMetrics: input.speechMetrics,
+    faceMetrics: input.faceMetrics,
+    candidateMood: input.candidateMood
+  });
+
+  if (decision.classification === "wrap_up") {
+    const wrapUp = decision.wrapUpText || "Thanks for taking the time today. We'll review and follow up with feedback shortly.";
+    const transition = decision.transitionPhrase ? `${decision.transitionPhrase} ` : "";
+    return {
+      replyText: `${transition}${wrapUp}`.trim(),
+      classification: "wrap_up",
+      isQuestionComplete: true,
+      evaluation,
+      session: scoredSession,
+      shouldEndInterview: true
+    };
+  }
+
+  // next_main_question: generate the next question and stitch it after the
+  // transition phrase.
+  const nextTargetIndex = scoredSession.turns.length;
+  const nextQuestion = await generateQuestion({
+    session: scoredSession,
+    targetTurnIndex: nextTargetIndex,
+    slotKind: { kind: "new" }
+  });
+  const transition = decision.transitionPhrase || "Got it.";
+  return {
+    replyText: `${transition} ${nextQuestion}`.trim(),
+    classification: "next_main_question",
+    isQuestionComplete: true,
+    evaluation,
+    session: scoredSession,
+    shouldEndInterview: false
+  };
+}

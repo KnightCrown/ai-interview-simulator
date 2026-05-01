@@ -148,6 +148,8 @@ export function useSpeechRecognition() {
   const startTimeRef = useRef<number | null>(null);
   const isListeningRef = useRef(false);
   const captureEnabledRef = useRef(false);
+  /** Latest interim line from the engine (for flush on pause / onend). */
+  const latestInterimRef = useRef("");
   // Set when the engine reports a non-recoverable error. Once true, we stop
   // auto-restarting until the consumer explicitly calls startListening again.
   const fatalErrorRef = useRef(false);
@@ -191,6 +193,7 @@ export function useSpeechRecognition() {
       if (!captureEnabledRef.current) {
         setTranscript("");
         setInterimTranscript("");
+        latestInterimRef.current = "";
         return;
       }
 
@@ -209,10 +212,9 @@ export function useSpeechRecognition() {
       }
 
       const trimmedFinal = finalText.trim();
+      const interimTrim = interimText.trim();
+
       if (trimmedFinal) {
-        // Dedupe inside the updater so we always compare against the freshest
-        // committed transcript, even when multiple onresult events batch in
-        // the same React tick.
         setTranscript((current) => {
           const deduped = dedupeOverlap(current, trimmedFinal);
           if (!deduped) return current;
@@ -220,10 +222,45 @@ export function useSpeechRecognition() {
         });
       }
 
-      setInterimTranscript(interimText.trim());
+      if (trimmedFinal && interimTrim) {
+        latestInterimRef.current = interimTrim;
+        setInterimTranscript(interimTrim);
+      } else if (trimmedFinal) {
+        latestInterimRef.current = "";
+        setInterimTranscript("");
+      } else if (interimTrim) {
+        latestInterimRef.current = interimTrim;
+        setInterimTranscript(interimTrim);
+      } else {
+        // Interim cleared with no new final in this event (common on pause).
+        const dangling = latestInterimRef.current.trim();
+        if (dangling) {
+          setTranscript((current) => {
+            const deduped = dedupeOverlap(current, dangling);
+            if (!deduped) return current;
+            return current ? `${current} ${deduped}` : deduped;
+          });
+        }
+        latestInterimRef.current = "";
+        setInterimTranscript("");
+      }
     };
 
     recognition.onend = () => {
+      // Many browsers leave the last phrase in `interim` only; finals can arrive
+      // late or not at all before a pause. Promote dangling interim so consumers
+      // (e.g. live interview debounce) see committed text after the user stops.
+      const dangling = latestInterimRef.current.trim();
+      if (dangling && captureEnabledRef.current && !fatalErrorRef.current) {
+        setTranscript((current) => {
+          const deduped = dedupeOverlap(current, dangling);
+          if (!deduped) return current;
+          return current ? `${current} ${deduped}` : deduped;
+        });
+        setInterimTranscript("");
+        latestInterimRef.current = "";
+      }
+
       isListeningRef.current = false;
       setIsListening(false);
       clearElapsedTimer();
@@ -283,6 +320,7 @@ export function useSpeechRecognition() {
   const resetTranscript = useCallback(() => {
     setTranscript("");
     setInterimTranscript("");
+    latestInterimRef.current = "";
     setElapsedSeconds(0);
     startTimeRef.current = isListeningRef.current ? Date.now() : null;
   }, []);
@@ -299,6 +337,7 @@ export function useSpeechRecognition() {
     }
     setTranscript("");
     setInterimTranscript("");
+    latestInterimRef.current = "";
     setElapsedSeconds(0);
     startTimeRef.current = enabled && isListeningRef.current ? Date.now() : null;
   }, [clearRestartTimer]);

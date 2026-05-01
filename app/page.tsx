@@ -164,6 +164,9 @@ export default function LandingPage() {
   const [difficulty, setDifficulty] = useState<InterviewDifficulty>("Medium");
   const [resumeMode, setResumeMode] = useState<ResumeMode>("Skip Resume");
   const [uploadedResumeName, setUploadedResumeName] = useState("");
+  // When true, the user opts into the new HeyGen Live Avatar (Beta) flow which
+  // routes to /interview/live instead of the classic /interview page.
+  const [useLiveAvatar, setUseLiveAvatar] = useState(false);
   const [isStarting, setIsStarting] = useState(false);
   const [isCheckingMedia, setIsCheckingMedia] = useState(false);
   const [showPreparationOverlay, setShowPreparationOverlay] = useState(false);
@@ -413,7 +416,7 @@ export default function LandingPage() {
       await minDisplayPromise;
 
       setSession(data.session);
-      router.push("/interview");
+      router.push(useLiveAvatar ? "/interview/live" : "/interview");
     } catch (error) {
       setStartError(error instanceof Error ? error.message : "Could not start the interview.");
     } finally {
@@ -1040,6 +1043,30 @@ export default function LandingPage() {
                   </span>
                 </label>
               </fieldset>
+
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-2xl border px-4 py-4 transition ${
+                  useLiveAvatar
+                    ? "border-teal-500 bg-teal-50 dark:border-teal-400 dark:bg-teal-900/30"
+                    : "border-slate-200 bg-white hover:border-slate-300 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-500"
+                }`}
+              >
+                <input
+                  type="checkbox"
+                  checked={useLiveAvatar}
+                  onChange={(event) => setUseLiveAvatar(event.target.checked)}
+                  className="mt-1"
+                />
+                <span>
+                  <span className="flex items-center gap-2">
+                    <span className="block font-medium text-ink dark:text-white">Live HeyGen avatar</span>
+                    <span className="rounded-full bg-teal-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-700 dark:bg-teal-900/50 dark:text-teal-200">Beta</span>
+                  </span>
+                  <span className="mt-1 block text-sm text-slate-500 dark:text-slate-400">
+                    Talk to a streaming HeyGen interviewer with free-flow follow-ups, barge-in, and a 3-question wrap-up. Replaces the 2D avatar for this session.
+                  </span>
+                </span>
+              </label>
 
               <p className="rounded-2xl bg-slate-50 px-4 py-3 text-xs text-slate-500 dark:bg-slate-800/70 dark:text-slate-400">
                 Next step: pick the microphone and camera you want to use during the interview.

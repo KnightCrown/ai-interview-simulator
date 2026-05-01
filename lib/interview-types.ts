@@ -133,6 +133,12 @@ export interface InterviewSession {
   hiringOutcome: FunnelOutcome | null;
   liveConfidence: number;
   memory: InterviewMemory;
+  /**
+   * Set when leaving the HeyGen live interview (natural end or “End interview”).
+   * Chronological Interviewer/Candidate lines — consumed by `/api/interview/finalize`
+   * for a single end-of-session GPT report without extra orchestrator calls.
+   */
+  liveConversationTranscript?: string;
 }
 
 export interface FinalReport {

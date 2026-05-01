@@ -126,9 +126,8 @@ export default function InterviewPage() {
   const [coachingThoughts, setCoachingThoughts] = useState<CoachingThought[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [showCoaching, setShowCoaching] = useState(false);
-  // Default the live-insights overlay ON for mobile users so they can see
-  // confidence/WPM/mood without scrolling down to the insights panel.
-  const [showOverlay, setShowOverlay] = useState(false);
+  // Live-insights overlay defaults on; candidates can hide it with the toggle.
+  const [showOverlay, setShowOverlay] = useState(true);
   const [showTranscript, setShowTranscript] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [mainVideo, setMainVideo] = useState<MainVideo>("interviewer");
